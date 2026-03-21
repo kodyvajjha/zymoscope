@@ -243,7 +243,7 @@ void oled_show_status(float temp, float gravity_est,
     char line[17]; /* 128/8 = 16 chars max + NUL */
 
     /* Line 0: Title */
-    fb_puts(0, 0, "FermentaBot v2");
+    fb_puts(0, 0, "Zymoscope");
 
     /* Line 1: blank separator */
 

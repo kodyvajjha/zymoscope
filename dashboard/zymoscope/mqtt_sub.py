@@ -1,6 +1,6 @@
 """MQTT subscriber that runs in a background thread.
 
-Connects to the broker, subscribes to fermentabot/+/telemetry, parses JSON
+Connects to the broker, subscribes to zymoscope/+/telemetry, parses JSON
 payloads, stores them via db.py, and notifies registered callbacks (used by
 the WebSocket layer to push live updates).
 """
@@ -53,7 +53,7 @@ def publish_command(device_id: str, payload: dict[str, Any]) -> None:
     """Publish a command to a device via MQTT."""
     if _client is None or not _client.is_connected():
         raise RuntimeError("MQTT client is not connected")
-    topic = f"fermentabot/{device_id}/cmd"
+    topic = f"zymoscope/{device_id}/cmd"
     _client.publish(topic, json.dumps(payload), qos=1)
 
 
@@ -68,7 +68,7 @@ def _on_connect(
 ) -> None:
     if rc == 0:
         log.info("MQTT connected to %s:%s", settings.MQTT_BROKER, settings.MQTT_PORT)
-        client.subscribe("fermentabot/+/telemetry", qos=1)
+        client.subscribe("zymoscope/+/telemetry", qos=1)
     else:
         log.error("MQTT connection failed with code %s", rc)
 
@@ -82,7 +82,7 @@ def _on_message(
         log.warning("Bad payload on %s: %r", msg.topic, msg.payload[:200])
         return
 
-    # Extract device_id from topic: fermentabot/<device_id>/telemetry
+    # Extract device_id from topic: zymoscope/<device_id>/telemetry
     parts = msg.topic.split("/")
     if len(parts) >= 2:
         device_id = parts[1]
@@ -121,7 +121,7 @@ def start(daemon: bool = True) -> threading.Thread:
 
     _client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id="fermentabot-dashboard",
+        client_id="zymoscope-dashboard",
         protocol=mqtt.MQTTv311,
     )
     _client.on_connect = _on_connect  # type: ignore[assignment]

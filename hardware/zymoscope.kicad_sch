@@ -4,10 +4,10 @@
   (generator_version "7.0")
   (paper "A4")
   (title_block
-    (title "FermentaBot v2")
+    (title "Zymoscope")
     (date "2026-03-21")
     (rev "v2.0")
-    (company "FermentaBot Project")
+    (company "Zymoscope Project")
     (comment 1 "ESP32-based fermentation monitor/controller")
     (comment 2 "GPL-3.0 / CERN-OHL-S-2.0")
   )

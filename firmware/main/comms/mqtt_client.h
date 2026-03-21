@@ -1,5 +1,5 @@
 /*
- * MQTT client for FermentaBot telemetry
+ * MQTT client for Zymoscope telemetry
  */
 #pragma once
 

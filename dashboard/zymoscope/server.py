@@ -1,4 +1,4 @@
-"""FastAPI server for the FermentaBot dashboard."""
+"""FastAPI server for the Zymoscope dashboard."""
 
 from __future__ import annotations
 
@@ -56,13 +56,13 @@ async def lifespan(app: FastAPI):
     mqtt_sub.set_event_loop(asyncio.get_running_loop())
     mqtt_sub.register_callback(_broadcast)
     mqtt_sub.start(daemon=True)
-    log.info("FermentaBot dashboard started")
+    log.info("Zymoscope dashboard started")
     yield
     # Shutdown
     mqtt_sub.unregister_callback(_broadcast)
 
 
-app = FastAPI(title="FermentaBot", lifespan=lifespan)
+app = FastAPI(title="Zymoscope", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     uvicorn.run(
-        "fermentabot.server:app",
+        "zymoscope.server:app",
         host=settings.HOST,
         port=settings.PORT,
         reload=False,

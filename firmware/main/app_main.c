@@ -1,5 +1,5 @@
 /*
- * FermentaBot v2 — Main application
+ * Zymoscope v2 — Main application
  *
  * Wires together all subsystems:
  *   - DS18B20 temperature sensors (1-Wire, GPIO 4)
@@ -34,7 +34,7 @@
 #include "comms/wifi_sta.h"
 #include "comms/mqtt_client.h"
 
-static const char *TAG = "fermentabot";
+static const char *TAG = "zymoscope";
 
 /* ------------------------------------------------------------------ */
 /*  Relay GPIOs                                                       */
@@ -281,7 +281,7 @@ static void telemetry_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "FermentaBot v2 starting...");
+    ESP_LOGI(TAG, "Zymoscope v2 starting...");
 
     /* Print device ID (MAC-based) */
     {
@@ -350,5 +350,5 @@ void app_main(void)
     xTaskCreate(control_task,   "control",   4096, NULL, 5, NULL);
     xTaskCreate(telemetry_task, "telemetry", 4096, NULL, 4, NULL);
 
-    ESP_LOGI(TAG, "All tasks started. FermentaBot v2 running.");
+    ESP_LOGI(TAG, "All tasks started. Zymoscope v2 running.");
 }

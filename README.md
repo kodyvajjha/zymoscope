@@ -1,10 +1,10 @@
-# FermentaBot v2
+# Zymoscope
 
 An ESP32-based fermentation monitoring and control system with a real-time web dashboard.
 
 ## Overview
 
-FermentaBot v2 monitors and controls fermentation environments using:
+Zymoscope monitors and controls fermentation environments using:
 
 - **Temperature** sensing and PID control (DS18B20 probes + relay-driven heating/cooling)
 - **Specific gravity** estimation via load cell weight loss (CO2 off-gassing tracks sugar consumption)
@@ -33,7 +33,7 @@ ESP32 Sensor Node (per vessel)        Web App (laptop / Pi / server)
 ## Repository Layout
 
 ```
-fermentabot-v2/
+zymoscope/
 ├── firmware/                   # ESP-IDF v5.x firmware (C)
 │   ├── main/
 │   │   ├── app_main.c          # Entry point, FreeRTOS tasks
@@ -51,7 +51,7 @@ fermentabot-v2/
 │   ├── CMakeLists.txt
 │   └── sdkconfig.defaults
 ├── dashboard/                  # Python web app
-│   ├── fermentabot/
+│   ├── zymoscope/
 │   │   ├── server.py           # FastAPI routes + WebSocket
 │   │   ├── db.py               # SQLite schema + queries (async)
 │   │   ├── mqtt_sub.py         # MQTT subscriber thread
@@ -61,10 +61,10 @@ fermentabot-v2/
 │   ├── docker-compose.yml      # Optional: Mosquitto + InfluxDB + Grafana
 │   └── requirements.txt
 ├── hardware/                   # KiCad schematic + BOM
-│   ├── fermentabot-v2.kicad_pro
-│   ├── fermentabot-v2.kicad_sch
+│   ├── zymoscope.kicad_pro
+│   ├── zymoscope.kicad_sch
 │   └── bom/
-│       └── fermentabot-v2-bom.csv
+│       └── zymoscope-bom.csv
 ├── docs/
 │   ├── design.md               # Full architecture + design rationale
 │   ├── prototype-bom.md        # Ordering guide + wiring diagram
@@ -110,7 +110,7 @@ Requires [ESP-IDF v5.x](https://docs.espressif.com/projects/esp-idf/en/stable/es
 
 ```bash
 # Set your Wi-Fi credentials (edit defaults or flash via NVS)
-# Edit firmware/main/comms/wifi_sta.c: WIFI_SSID / WIFI_PASS
+# Edit firmware/main/comms/wifi_sta.h: WIFI_SSID / WIFI_PASS
 
 cd firmware/
 idf.py set-target esp32
@@ -127,8 +127,8 @@ pip install -r requirements.txt
 # Optional: set MQTT broker address (default: localhost:1883)
 export MQTT_BROKER=192.168.1.100
 
-python -m fermentabot.server
-# Open http://localhost:8080
+python -m zymoscope.server
+# Open http://localhost:8000
 ```
 
 The dashboard shows per-device cards with live temperature, estimated gravity,
@@ -165,9 +165,9 @@ GND           Common ground
 ## MQTT Topics
 
 ```
-fermentabot/<mac>/telemetry    # JSON, published every 30 s
-fermentabot/<mac>/cmd          # Subscribe: {"setpoint": 20.0}
-fermentabot/<mac>/status       # LWT: "online" / "offline"
+zymoscope/<mac>/telemetry    # JSON, published every 30 s
+zymoscope/<mac>/cmd          # Subscribe: {"setpoint": 20.0}
+zymoscope/<mac>/status       # LWT: "online" / "offline"
 ```
 
 ## Roadmap

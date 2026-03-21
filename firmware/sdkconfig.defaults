@@ -1,4 +1,4 @@
-# FermentaBot v2 — ESP-IDF sdkconfig defaults
+# Zymoscope — ESP-IDF sdkconfig defaults
 # Apply with: idf.py reconfigure
 
 CONFIG_IDF_TARGET="esp32"

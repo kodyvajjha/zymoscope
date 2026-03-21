@@ -1,4 +1,4 @@
-# FermentaBot v2 — Getting Started (Step by Step)
+# Zymoscope v2 — Getting Started (Step by Step)
 
 Everything from ordering parts to watching your first fermentation curve on
 the dashboard.
@@ -93,7 +93,7 @@ idf.py --version
 ### 2b: Install Python dependencies (web dashboard)
 
 ```bash
-cd /path/to/fermentabot-v2/dashboard
+cd /path/to/zymoscope-v2/dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -294,7 +294,7 @@ Plug the ESP32 into your laptop via USB.
 # Make sure ESP-IDF is sourced
 source ~/esp/esp-idf/export.sh
 
-cd /path/to/fermentabot-v2/firmware
+cd /path/to/zymoscope-v2/firmware
 
 idf.py set-target esp32
 idf.py build
@@ -309,15 +309,15 @@ idf.py -p /dev/ttyUSB0 flash monitor
 You should see log output like:
 
 ```
-I (520) fermentabot: FermentaBot v2 starting...
-I (530) fermentabot: Device MAC: AA:BB:CC:DD:EE:FF
+I (520) zymoscope: Zymoscope v2 starting...
+I (530) zymoscope: Device MAC: AA:BB:CC:DD:EE:FF
 I (780) wifi_sta: Connecting to "YourWiFiName"...
 I (2100) wifi_sta: Connected! IP: 192.168.1.42
 I (3200) mqtt: Connected to mqtt://192.168.1.100:1883
-I (3210) fermentabot: Taring scale...
-I (5200) fermentabot: DS18B20[0]: 22.31 C
-I (5200) fermentabot: BME280: 23.1 C, 45.2% RH, 1013.2 hPa
-I (5200) fermentabot: Weight: 0.0 g
+I (3210) zymoscope: Taring scale...
+I (5200) zymoscope: DS18B20[0]: 22.31 C
+I (5200) zymoscope: BME280: 23.1 C, 45.2% RH, 1013.2 hPa
+I (5200) zymoscope: Weight: 0.0 g
 ```
 
 The OLED should light up showing temperature, gravity, and relay states.
@@ -331,13 +331,13 @@ Press `Ctrl+]` to exit the serial monitor.
 In a new terminal on your laptop:
 
 ```bash
-cd /path/to/fermentabot-v2/dashboard
+cd /path/to/zymoscope-v2/dashboard
 source .venv/bin/activate
 
 # Point it at your MQTT broker (skip if running on the same machine)
 export MQTT_BROKER=localhost
 
-python -m fermentabot.server
+python -m zymoscope.server
 ```
 
 Open **http://localhost:8000** in your browser.
@@ -467,7 +467,7 @@ PID setpoint remotely via MQTT:
 # Replace AA:BB:CC:DD:EE:FF with your actual MAC (lowercase, no colons)
 
 mosquitto_pub -h localhost \
-  -t "fermentabot/aabbccddeeff/cmd" \
+  -t "zymoscope/aabbccddeeff/cmd" \
   -m '{"setpoint": 18.0}'
 ```
 

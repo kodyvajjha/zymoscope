@@ -1,4 +1,4 @@
-# FermentaBot v2 — Prototype Build Guide
+# Zymoscope v2 — Prototype Build Guide
 
 ## Overview
 
@@ -134,7 +134,7 @@ Total: ~$40–50
 
 1. Wire everything per the diagram above
 2. Flash the firmware: `cd firmware/ && idf.py build flash monitor`
-3. Start the web app: `cd dashboard/ && python -m fermentabot.server`
+3. Start the web app: `cd dashboard/ && python -m zymoscope.server`
 4. Open `http://localhost:8080` — you should see live sensor data
 5. Calibrate the load cell with a known weight
 6. Stick the temp probe in your vessel and start a batch

@@ -15,7 +15,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "fermentabot-v2.kicad_pro",
+    "filename": "zymoscope.kicad_pro",
     "version": 1
   },
   "net_settings": {
@@ -72,6 +72,6 @@
   "sheets": [],
   "text_variables": {
     "REVISION": "v2.0",
-    "TITLE": "FermentaBot v2"
+    "TITLE": "Zymoscope"
   }
 }

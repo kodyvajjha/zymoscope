@@ -1,8 +1,8 @@
 /*
- * MQTT client for FermentaBot telemetry
+ * MQTT client for Zymoscope telemetry
  *
- * Publishes JSON telemetry to  fermentabot/{device_id}/telemetry
- * Subscribes to                fermentabot/{device_id}/cmd
+ * Publishes JSON telemetry to  zymoscope/{device_id}/telemetry
+ * Subscribes to                zymoscope/{device_id}/cmd
  *
  * Uses the ESP-MQTT component shipped with ESP-IDF v5.x.
  */
@@ -98,9 +98,9 @@ esp_err_t mqtt_client_init(const char *broker_uri)
     get_device_id(device_id, sizeof(device_id));
 
     snprintf(topic_telemetry, sizeof(topic_telemetry),
-             "fermentabot/%s/telemetry", device_id);
+             "zymoscope/%s/telemetry", device_id);
     snprintf(topic_cmd, sizeof(topic_cmd),
-             "fermentabot/%s/cmd", device_id);
+             "zymoscope/%s/cmd", device_id);
 
     ESP_LOGI(TAG, "Device ID: %s", device_id);
     ESP_LOGI(TAG, "Telemetry topic: %s", topic_telemetry);

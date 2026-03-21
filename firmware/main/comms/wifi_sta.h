@@ -7,7 +7,7 @@
 #include <stdbool.h>
 
 #ifndef WIFI_SSID
-#define WIFI_SSID "FermentaNet"
+#define WIFI_SSID "ZymoNet"
 #endif
 
 #ifndef WIFI_PASS

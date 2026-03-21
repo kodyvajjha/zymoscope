@@ -1,4 +1,4 @@
-# FermentaBot v2 — Design Document
+# Zymoscope — Design Document
 
 ## 1. Goals and Constraints
 
@@ -22,7 +22,7 @@
 └───────┼──────────────┼─────────────────┼────────────┘
         │              │                 │
 ┌───────▼──────────────▼─────────────────▼────────────┐
-│  FermentaBot PCB                                    │
+│  Zymoscope PCB                                      │
 │  ┌────────────────────────────────────────────────┐ │
 │  │  ESP32-WROOM-32E                               │ │
 │  │  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │ │
@@ -120,9 +120,9 @@ main/
 ### 4.1 MQTT Topic Schema
 
 ```
-fermentabot/<device_id>/telemetry   JSON, published every 30 s
-fermentabot/<device_id>/cmd         Subscribe for setpoint / relay override
-fermentabot/<device_id>/status      LWT "offline" / "online"
+zymoscope/<device_id>/telemetry   JSON, published every 30 s
+zymoscope/<device_id>/cmd         Subscribe for setpoint / relay override
+zymoscope/<device_id>/status      LWT "offline" / "online"
 ```
 
 Telemetry payload example:
