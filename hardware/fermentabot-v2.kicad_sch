@@ -1,0 +1,34 @@
+(kicad_sch
+  (version 20231120)
+  (generator "eeschema")
+  (generator_version "7.0")
+  (paper "A4")
+  (title_block
+    (title "FermentaBot v2")
+    (date "2026-03-21")
+    (rev "v2.0")
+    (company "FermentaBot Project")
+    (comment 1 "ESP32-based fermentation monitor/controller")
+    (comment 2 "GPL-3.0 / CERN-OHL-S-2.0")
+  )
+
+  ;; ── Sheet annotations ───────────────────────────────────────────────────
+  ;; U1  ESP32-WROOM-32E module
+  ;; U2  AMS1117-3.3 LDO regulator
+  ;; U3  SSD1306 128x64 OLED (I2C)
+  ;; DS1 DS18B20 1-Wire temperature probe (4.7k pull-up R1)
+  ;; K1  Relay 1 (heater)  — opto PC817 + NPN 2N2222
+  ;; K2  Relay 2 (cooler)  — opto PC817 + NPN 2N2222
+  ;; J1  5V barrel jack input
+  ;; J2  1-Wire screw terminal (3-pin)
+  ;; J3  Relay 1 output screw terminal (2-pin)
+  ;; J4  Relay 2 output screw terminal (2-pin)
+  ;; J5  UART/programming header (4-pin)
+  ;; C1,C2  100 nF bypass caps on 3.3V rail
+  ;; C3     10 uF bulk cap on 3.3V rail
+  ;; C4     100 uF bulk cap on 5V rail
+
+  ;; NOTE: This is a placeholder schematic skeleton.
+  ;; Open in KiCad 7+ and add symbols from the standard libraries.
+  ;; Netlist corresponds to design described in docs/design.md.
+)

@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FermentaBot</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #121218;
+    --surface:  #1c1c26;
+    --border:   #2a2a3a;
+    --text:     #e0e0e8;
+    --dim:      #888898;
+    --accent:   #f0a020;
+    --heat:     #e05040;
+    --cool:     #40a0e0;
+    --green:    #40c060;
+    --radius:   8px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header h1 { font-size: 1.4rem; color: var(--accent); }
+  header .status { font-size: .85rem; color: var(--dim); }
+  header .status .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim); margin-right: 4px; vertical-align: middle;
+  }
+  header .status .dot.ok { background: var(--green); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 800px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  /* --- Device cards --- */
+  .devices { display: grid; gap: 1rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.2rem;
+  }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: .8rem;
+  }
+  .card-header h2 { font-size: 1rem; font-weight: 600; }
+  .card-header .rssi { font-size: .75rem; color: var(--dim); }
+  .metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .6rem;
+    margin-bottom: .8rem;
+  }
+  .metric { text-align: center; }
+  .metric .val { font-size: 1.8rem; font-weight: 700; }
+  .metric .lbl { font-size: .7rem; color: var(--dim); text-transform: uppercase; }
+  .metric.temp .val { color: var(--heat); }
+  .metric.gravity .val { color: var(--accent); }
+  .secondary {
+    display: flex; gap: 1rem; justify-content: center;
+    font-size: .8rem; color: var(--dim); margin-bottom: .6rem;
+  }
+  .relays { display: flex; gap: .6rem; justify-content: center; margin-bottom: .8rem; }
+  .relay-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--border);
+  }
+  .relay-dot.heat.on { background: var(--heat); box-shadow: 0 0 6px var(--heat); }
+  .relay-dot.cool.on { background: var(--cool); box-shadow: 0 0 6px var(--cool); }
+  .relay-label { font-size: .7rem; color: var(--dim); text-align: center; }
+  .relay-group { text-align: center; }
+  .chart-wrap { height: 180px; }
+
+  .no-devices {
+    text-align: center; color: var(--dim); padding: 3rem 1rem;
+    font-size: .95rem;
+  }
+
+  /* --- Sidebar --- */
+  .sidebar h3 { font-size: .95rem; margin-bottom: .6rem; color: var(--accent); }
+  .batch-list { list-style: none; margin-bottom: 1.2rem; }
+  .batch-list li {
+    padding: .5rem 0; border-bottom: 1px solid var(--border);
+    font-size: .85rem;
+  }
+  .batch-list .style { color: var(--dim); font-size: .75rem; }
+  .form-group { margin-bottom: .6rem; }
+  .form-group label { display: block; font-size: .75rem; color: var(--dim); margin-bottom: 2px; }
+  .form-group input, .form-group textarea, .form-group select {
+    width: 100%; padding: .4rem .5rem;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; font-size: .85rem;
+  }
+  .form-group textarea { resize: vertical; min-height: 50px; }
+  button.btn {
+    background: var(--accent); color: #000; border: none;
+    padding: .45rem 1rem; border-radius: 4px; cursor: pointer;
+    font-size: .85rem; font-weight: 600;
+  }
+  button.btn:hover { filter: brightness(1.15); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>FermentaBot</h1>
+  <div class="status">
+    <span class="dot" id="ws-dot"></span>
+    <span id="device-count">0</span> device(s)
+  </div>
+</header>
+
+<div class="layout">
+  <section class="devices" id="devices">
+    <div class="no-devices" id="no-devices">Waiting for devices&hellip;</div>
+  </section>
+
+  <aside class="sidebar">
+    <div class="card">
+      <h3>Batches</h3>
+      <ul class="batch-list" id="batch-list">
+        <li style="color:var(--dim)">No batches yet</li>
+      </ul>
+      <h3>New Batch</h3>
+      <form id="batch-form">
+        <div class="form-group">
+          <label>Name</label>
+          <input name="name" required placeholder="e.g. Hefeweizen #4">
+        </div>
+        <div class="form-group">
+          <label>Device</label>
+          <select name="device_id" id="device-select">
+            <option value="">-- select --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Style</label>
+          <input name="style" placeholder="e.g. Wheat Beer">
+        </div>
+        <div class="form-group">
+          <label>OG</label>
+          <input name="og" type="number" step="0.001" placeholder="1.050">
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea name="notes" placeholder="Optional notes"></textarea>
+        </div>
+        <button type="submit" class="btn">Create Batch</button>
+      </form>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  const devices = {};   // device_id -> { el, chart, data }
+  const devicesEl = document.getElementById("devices");
+  const noDevicesEl = document.getElementById("no-devices");
+  const wsDot = document.getElementById("ws-dot");
+  const deviceCount = document.getElementById("device-count");
+  const batchList = document.getElementById("batch-list");
+  const deviceSelect = document.getElementById("device-select");
+  const batchForm = document.getElementById("batch-form");
+
+  // -- helpers --
+  function fmtTemp(tc) {
+    if (tc == null) return "--";
+    if (typeof tc === "string") {
+      try { const arr = JSON.parse(tc); if (arr.length) return Number(arr[0]).toFixed(1); } catch {}
+      return Number(tc).toFixed(1);
+    }
+    if (Array.isArray(tc)) return tc.length ? Number(tc[0]).toFixed(1) : "--";
+    return Number(tc).toFixed(1);
+  }
+  function fmtGrav(g) { return g != null ? Number(g).toFixed(3) : "--"; }
+  function fmtVal(v, d) { return v != null ? Number(v).toFixed(d || 1) : "--"; }
+
+  // -- build a device card --
+  function ensureDevice(id) {
+    if (devices[id]) return devices[id];
+    noDevicesEl.style.display = "none";
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="card-header">
+        <h2>${id}</h2>
+        <span class="rssi" data-f="rssi"></span>
+      </div>
+      <div class="metrics">
+        <div class="metric temp"><div class="val" data-f="temp">--</div><div class="lbl">Temp &deg;C</div></div>
+        <div class="metric gravity"><div class="val" data-f="gravity">--</div><div class="lbl">Est. Gravity</div></div>
+      </div>
+      <div class="secondary">
+        <span>Humidity: <b data-f="humidity">--</b>%</span>
+        <span>Pressure: <b data-f="pressure">--</b> hPa</span>
+      </div>
+      <div class="relays">
+        <div class="relay-group"><div class="relay-dot heat" data-f="relay1"></div><div class="relay-label">Heat</div></div>
+        <div class="relay-group"><div class="relay-dot cool" data-f="relay2"></div><div class="relay-label">Cool</div></div>
+      </div>
+      <div class="chart-wrap"><canvas></canvas></div>
+    `;
+    devicesEl.appendChild(card);
+
+    const canvas = card.querySelector("canvas");
+    const chart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: [],
+        datasets: [
+          { label: "Temp C", data: [], borderColor: "#e05040", borderWidth: 1.5, pointRadius: 0, tension: 0.3, yAxisID: "y" },
+          { label: "Gravity", data: [], borderColor: "#f0a020", borderWidth: 1.5, pointRadius: 0, tension: 0.3, yAxisID: "y1" },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: true, labels: { color: "#888", boxWidth: 12, font: { size: 10 } } } },
+        scales: {
+          x: { display: true, ticks: { color: "#555", maxTicksLimit: 6, font: { size: 9 } }, grid: { color: "#222" } },
+          y:  { position: "left",  ticks: { color: "#e05040", font: { size: 9 } }, grid: { color: "#222" }, title: { display: false } },
+          y1: { position: "right", ticks: { color: "#f0a020", font: { size: 9 } }, grid: { drawOnChartArea: false } },
+        }
+      }
+    });
+
+    const entry = { el: card, chart, labels: [], temps: [], gravs: [] };
+    devices[id] = entry;
+
+    // Add to device select if not present.
+    if (!deviceSelect.querySelector(`option[value="${id}"]`)) {
+      const opt = document.createElement("option");
+      opt.value = id; opt.textContent = id;
+      deviceSelect.appendChild(opt);
+    }
+
+    updateDeviceCount();
+    fetchHistory(id);
+    return entry;
+  }
+
+  function updateCard(id, d) {
+    const entry = ensureDevice(id);
+    const el = entry.el;
+    const q = (sel) => el.querySelector(`[data-f="${sel}"]`);
+
+    q("temp").textContent = fmtTemp(d.temp_c);
+    q("gravity").textContent = fmtGrav(d.gravity_est);
+    q("humidity").textContent = fmtVal(d.humidity, 1);
+    q("pressure").textContent = fmtVal(d.pressure, 1);
+    q("rssi").textContent = d.rssi != null ? d.rssi + " dBm" : "";
+
+    const r1 = q("relay1"); r1.classList.toggle("on", !!d.relay1);
+    const r2 = q("relay2"); r2.classList.toggle("on", !!d.relay2);
+
+    // Append to chart
+    const ts = d.timestamp ? new Date(d.timestamp * 1000) : new Date();
+    const label = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const tempVal = parseTemp(d.temp_c);
+    const gravVal = d.gravity_est != null ? Number(d.gravity_est) : null;
+
+    entry.labels.push(label);
+    entry.temps.push(tempVal);
+    entry.gravs.push(gravVal);
+
+    // Keep last 500 points.
+    if (entry.labels.length > 500) {
+      entry.labels.shift(); entry.temps.shift(); entry.gravs.shift();
+    }
+
+    entry.chart.data.labels = entry.labels;
+    entry.chart.data.datasets[0].data = entry.temps;
+    entry.chart.data.datasets[1].data = entry.gravs;
+    entry.chart.update("none");
+  }
+
+  function parseTemp(tc) {
+    if (tc == null) return null;
+    if (typeof tc === "string") {
+      try { const arr = JSON.parse(tc); if (arr.length) return Number(arr[0]); } catch {}
+      return Number(tc) || null;
+    }
+    if (Array.isArray(tc)) return tc.length ? Number(tc[0]) : null;
+    return Number(tc);
+  }
+
+  function updateDeviceCount() {
+    deviceCount.textContent = Object.keys(devices).length;
+  }
+
+  // -- fetch historical data for chart --
+  async function fetchHistory(id) {
+    try {
+      const res = await fetch(`/api/telemetry/${encodeURIComponent(id)}?hours=24`);
+      const rows = await res.json();
+      const entry = devices[id];
+      if (!entry || !rows.length) return;
+
+      entry.labels.length = 0; entry.temps.length = 0; entry.gravs.length = 0;
+      for (const r of rows) {
+        const ts = new Date(r.timestamp * 1000);
+        entry.labels.push(ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+        entry.temps.push(parseTemp(r.temp_c));
+        entry.gravs.push(r.gravity_est != null ? Number(r.gravity_est) : null);
+      }
+      entry.chart.data.labels = entry.labels;
+      entry.chart.data.datasets[0].data = entry.temps;
+      entry.chart.data.datasets[1].data = entry.gravs;
+      entry.chart.update("none");
+    } catch (e) { console.warn("fetchHistory failed", e); }
+  }
+
+  // -- WebSocket with auto-reconnect --
+  let ws;
+  function connectWs() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onopen = () => { wsDot.classList.add("ok"); };
+    ws.onclose = () => { wsDot.classList.remove("ok"); setTimeout(connectWs, 3000); };
+    ws.onerror = () => { ws.close(); };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "snapshot" && msg.devices) {
+          for (const [id, d] of Object.entries(msg.devices)) updateCard(id, d);
+        } else if (msg.device_id) {
+          updateCard(msg.device_id, msg);
+        }
+      } catch (e) { console.warn("ws parse error", e); }
+    };
+  }
+  connectWs();
+
+  // -- Batches --
+  async function loadBatches() {
+    try {
+      const res = await fetch("/api/batches");
+      const list = await res.json();
+      if (!list.length) { batchList.innerHTML = '<li style="color:var(--dim)">No batches yet</li>'; return; }
+      batchList.innerHTML = "";
+      for (const b of list) {
+        const li = document.createElement("li");
+        li.innerHTML = `<strong>${b.name}</strong> <span class="style">${b.style || ""}</span>` +
+          (b.og ? ` &middot; OG ${Number(b.og).toFixed(3)}` : "") +
+          (b.device_id ? ` &middot; ${b.device_id}` : "");
+        batchList.appendChild(li);
+      }
+    } catch {}
+  }
+  loadBatches();
+
+  // -- Load known devices --
+  async function loadDevices() {
+    try {
+      const res = await fetch("/api/devices");
+      const list = await res.json();
+      for (const d of list) ensureDevice(d.device_id);
+    } catch {}
+  }
+  loadDevices();
+
+  // -- Batch form --
+  batchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(batchForm);
+    const body = {};
+    for (const [k, v] of fd.entries()) { if (v) body[k] = k === "og" ? parseFloat(v) : v; }
+    try {
+      await fetch("/api/batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      batchForm.reset();
+      loadBatches();
+    } catch (err) { console.error("batch create failed", err); }
+  });
+
+})();
+</script>
+</body>
+</html>

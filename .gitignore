@@ -1,0 +1,69 @@
+# ── KiCad build artifacts ────────────────────────────────────────────────────
+# Gerber / fabrication outputs (regenerate from PCB file)
+hardware/**/*.gbr
+hardware/**/*.drl
+hardware/**/*.exc
+hardware/**/*.xln
+hardware/**/*.gtl
+hardware/**/*.gbl
+hardware/**/*.gts
+hardware/**/*.gbs
+hardware/**/*.gto
+hardware/**/*.gbo
+hardware/**/*.gtp
+hardware/**/*.gbp
+hardware/**/*.gm1
+hardware/**/*.dxf
+hardware/**/*.pdf
+hardware/**/gerbers/
+hardware/**/fab/
+
+# KiCad backup / auto-save
+hardware/**/*.kicad_sch-bak
+hardware/**/*.kicad_pcb-bak
+hardware/**/*-backups/
+hardware/**/_autosave-*
+hardware/**/*.000
+hardware/**/*.bak
+
+# KiCad project local settings (machine-specific)
+hardware/**/*.kicad_pro.bak
+hardware/**/fp-lib-table
+hardware/**/sym-lib-table
+
+# KiCad cache / 3D step exports
+hardware/**/*-cache.lib
+hardware/**/*.kicad_pcb.bak
+hardware/**/__pycache__/
+hardware/**/*.pyc
+
+# ── ESP-IDF / firmware build ─────────────────────────────────────────────────
+firmware/build/
+firmware/managed_components/
+firmware/.cache/
+firmware/dependencies.lock
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/**/*.o
+firmware/**/*.a
+firmware/**/*.d
+firmware/**/*.map
+firmware/**/*.elf
+firmware/**/*.bin
+firmware/**/*.hex
+
+# ── Dashboard secrets / local overrides ─────────────────────────────────────
+dashboard/.env
+dashboard/.env.local
+dashboard/grafana/data/
+dashboard/influxdb/data/
+dashboard/mosquitto/data/
+dashboard/mosquitto/log/
+
+# ── General ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/settings.json

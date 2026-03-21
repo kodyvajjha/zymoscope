@@ -1,0 +1,30 @@
+Reference,Quantity,Value,Footprint,MPN,Supplier,Supplier PN,Unit Price (USD),Notes
+U1,1,ESP32-WROOM-32E,RF_Module:ESP32-WROOM-32,ESP32-WROOM-32E-N4,Mouser,356-ESP32WROOM32EN4,3.50,4 MB flash variant
+U2,1,AMS1117-3.3,Package_TO_SOT_SMD:SOT-223-3_TabPin2,AMS1117-3.3,LCSC,C6186,0.15,800 mA LDO
+U3,1,SSD1306 OLED 128x64,Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical,SSD1306 0.96",AliExpress,—,1.20,I2C, 4-pin breakout
+DS1,1,DS18B20,—,DS18B20+,Mouser,700-DS18B20+,2.15,Waterproof probe variant preferred
+K1,1,Relay 5V SPDT 10A,Relay_THT:Relay_SPDT_Omron_G5LE,G5LE-14-DC5,Mouser,653-G5LE-14DC5,1.85,5V coil
+K2,1,Relay 5V SPDT 10A,Relay_THT:Relay_SPDT_Omron_G5LE,G5LE-14-DC5,Mouser,653-G5LE-14DC5,1.85,5V coil
+Q1,1,2N2222A,Package_TO_SOT_THT:TO-92_Inline,2N2222A,Mouser,512-2N2222A,0.25,Relay driver NPN (K1)
+Q2,1,2N2222A,Package_TO_SOT_THT:TO-92_Inline,2N2222A,Mouser,512-2N2222A,0.25,Relay driver NPN (K2)
+OC1,1,PC817,Package_DIP:DIP-4_W7.62mm,PC817C,LCSC,C66880,0.08,Opto-isolator (K1 drive)
+OC2,1,PC817,Package_DIP:DIP-4_W7.62mm,PC817C,LCSC,C66880,0.08,Opto-isolator (K2 drive)
+D1,1,1N4148,Diode_THT:D_DO-35_SOD27_P7.62mm_Horizontal,1N4148,Mouser,512-1N4148,0.05,Flyback diode K1
+D2,1,1N4148,Diode_THT:D_DO-35_SOD27_P7.62mm_Horizontal,1N4148,Mouser,512-1N4148,0.05,Flyback diode K2
+R1,1,4.7k,Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal,—,—,—,0.02,1-Wire pull-up
+R2,1,10k,Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal,—,—,—,0.02,ESP32 EN pull-up
+R3,1,1k,Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal,—,—,—,0.02,Q1 base resistor
+R4,1,1k,Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal,—,—,—,0.02,Q2 base resistor
+R5,1,10k,Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal,—,—,—,0.02,GPIO0 pull-up (boot)
+C1,1,100nF,Capacitor_SMD:C_0402_1005Metric,—,—,—,0.02,3.3V bypass (near U2)
+C2,1,100nF,Capacitor_SMD:C_0402_1005Metric,—,—,—,0.02,3.3V bypass (near U1)
+C3,1,10uF 10V,Capacitor_THT:C_Radial_D5.0mm_H11.0mm_P2.00mm,—,—,—,0.10,3.3V bulk
+C4,1,100uF 10V,Capacitor_THT:C_Radial_D8.0mm_H11.5mm_P3.50mm,—,—,—,0.15,5V bulk
+J1,1,Barrel Jack 2.1mm,Connector_BarrelJack:BarrelJack_Wuerth_6941xx301002,—,Mouser,—,0.80,5V DC input
+J2,1,Screw Terminal 3-pin 3.81mm,TerminalBlock_Phoenix:MKDS_1,5_3-5.08,—,—,—,0.60,1-Wire probe connector
+J3,1,Screw Terminal 2-pin 5.08mm,TerminalBlock_Phoenix:MKDS_1,5_2-5.08,—,—,—,0.45,Relay 1 output
+J4,1,Screw Terminal 2-pin 5.08mm,TerminalBlock_Phoenix:MKDS_1,5_2-5.08,—,—,—,0.45,Relay 2 output
+J5,1,Pin Header 4-pin 2.54mm,Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical,—,—,—,0.20,UART/prog header
+PCB,1,Custom 2-layer PCB,—,—,JLCPCB,—,8.00,10 pcs @ $8 min order
+Enclosure,1,DIN rail enclosure,—,—,AliExpress,—,4.50,45 mm DIN rail snap
+,,,,,,Estimated total (1 unit):,$26.30,

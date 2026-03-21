@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "sensor/ds18b20.c"
+        "sensor/hx711.c"
+        "sensor/bme280_i2c.c"
+        "display/oled.c"
+        "control/pid.c"
+        "comms/wifi_sta.c"
+        "comms/mqtt_client.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        driver
+        esp_wifi
+        esp_event
+        esp_netif
+        nvs_flash
+        mqtt
+        esp_timer
+)
