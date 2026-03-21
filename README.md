@@ -67,7 +67,8 @@ fermentabot-v2/
 │       └── fermentabot-v2-bom.csv
 ├── docs/
 │   ├── design.md               # Full architecture + design rationale
-│   └── prototype-bom.md        # Ordering guide + wiring diagram
+│   ├── prototype-bom.md        # Ordering guide + wiring diagram
+│   └── getting-started.md      # Step-by-step: order → build → ferment
 ├── .gitignore
 ├── LICENSE                     # GPL-3.0
 └── README.md
@@ -97,8 +98,9 @@ No custom PCB needed. Use an ESP32 dev board + breakout modules on a breadboard.
 | Half-size breadboard | "400 tie point breadboard" | 1 | $2–3 |
 | Dupont jumper wires (M-M + M-F) | "dupont jumper wire kit" | 1 | $3–4 |
 
-See [`docs/prototype-bom.md`](docs/prototype-bom.md) for the full wiring guide,
-load cell mounting instructions, and detailed notes on each part.
+See [`docs/prototype-bom.md`](docs/prototype-bom.md) for detailed part notes and
+[`docs/getting-started.md`](docs/getting-started.md) for the complete step-by-step
+walkthrough from ordering parts to tracking your first fermentation.
 
 ## Quick Start
 
