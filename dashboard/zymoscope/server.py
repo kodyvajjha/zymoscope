@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from . import db, mqtt_sub
+from . import db, mqtt_sub, smart_plug
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -31,13 +31,15 @@ _ws_clients: set[WebSocket] = set()
 
 
 def _broadcast(device_id: str, payload: dict[str, Any]) -> None:
-    """Called from the MQTT thread to fan-out to WebSocket clients."""
+    """Called from the MQTT thread to fan-out to WebSocket clients and smart plugs."""
     loop = asyncio.get_event_loop() if False else mqtt_sub._loop
     if loop is None:
         return
     msg = json.dumps({"device_id": device_id, **payload})
     for ws in list(_ws_clients):
         asyncio.run_coroutine_threadsafe(_safe_send(ws, msg), loop)
+    # Forward relay state changes to Kasa smart plugs.
+    asyncio.run_coroutine_threadsafe(smart_plug.on_telemetry(device_id, payload), loop)
 
 
 async def _safe_send(ws: WebSocket, text: str) -> None:
@@ -56,9 +58,20 @@ async def lifespan(app: FastAPI):
     mqtt_sub.set_event_loop(asyncio.get_running_loop())
     mqtt_sub.register_callback(_broadcast)
     mqtt_sub.start(daemon=True)
+    # Start smart plug energy polling (every 30s) if plugs are configured.
+    energy_task = None
+    if settings.KASA_HEATER_HOST or settings.KASA_COOLER_HOST:
+        async def _poll_energy_loop() -> None:
+            while True:
+                await smart_plug.poll_energy()
+                await asyncio.sleep(30)
+        energy_task = asyncio.create_task(_poll_energy_loop())
+        log.info("Smart plug energy polling started")
     log.info("Zymoscope dashboard started")
     yield
     # Shutdown
+    if energy_task:
+        energy_task.cancel()
     mqtt_sub.unregister_callback(_broadcast)
 
 
@@ -108,6 +121,30 @@ async def api_command(device_id: str, request: Request):
     except RuntimeError as exc:
         return {"error": str(exc)}
     return {"status": "sent", "device_id": device_id}
+
+
+@app.get("/api/plugs")
+async def api_plugs():
+    """Return current smart plug status and energy readings."""
+    plugs = []
+    for host in [settings.KASA_HEATER_HOST, settings.KASA_COOLER_HOST]:
+        if host:
+            status = await smart_plug.get_status(host)
+            if status:
+                plugs.append(status)
+    return plugs
+
+
+@app.post("/api/plugs/{host}/on")
+async def api_plug_on(host: str):
+    ok = await smart_plug.turn_on(host)
+    return {"status": "ok" if ok else "error", "host": host}
+
+
+@app.post("/api/plugs/{host}/off")
+async def api_plug_off(host: str):
+    ok = await smart_plug.turn_off(host)
+    return {"status": "ok" if ok else "error", "host": host}
 
 
 @app.websocket("/ws")

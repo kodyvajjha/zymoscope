@@ -4,3 +4,4 @@ paho-mqtt
 jinja2
 aiosqlite
 python-multipart
+python-kasa

@@ -3,7 +3,7 @@
 ## Overview
 
 This is the **minimum viable prototype**: an ESP32 dev board + breakout sensor
-modules wired on a protoboard. No custom PCB needed. Total cost: **~$45–55**
+modules wired on a protoboard. No custom PCB needed. Total cost: **~$45–55** (or ~$60–75 with an optional Kasa smart plug)
 depending on supplier.
 
 The goal is to validate the sensor pipeline, firmware, and web app before
@@ -39,7 +39,13 @@ price. Amazon 2-day shipping is the sweet spot for prototyping.
 | 10 | **Dupont jumper wires** (M-M, M-F) | Amazon | 1 pack | $3–4 | 40-pin ribbon, get both male-male and male-female. |
 | 11 | **Micro USB or USB-C cable** | — | 1 | $0 | You probably have one. Powers the ESP32 + provides serial for flashing. |
 
-**Amazon subtotal: ~$25–30**
+### Optional: Smart Plug (recommended for heater/cooler control)
+
+| # | Part | Where to Buy | Qty | ~Price | Notes |
+|---|------|-------------|-----|--------|-------|
+| 12 | **TP-Link Kasa KP115** smart plug | Amazon | 1 | $15–20 | Search "TP-Link Kasa KP115". Has energy monitoring (power, voltage, current). Controlled locally via python-kasa — no cloud required. Plug your seedling heat mat or space heater into this instead of wiring mains through the relay module. KP125, HS110, or similar Kasa plugs also work. |
+
+**Amazon subtotal: ~$25–30** (or ~$40–50 with smart plug)
 
 ---
 
@@ -125,7 +131,10 @@ Amazon:
   [ ] Half-size breadboard (or 7×9 cm protoboard)       ×1
   [ ] Dupont jumper wires (M-M + M-F, 40-pin)          ×1
 
-Total: ~$45–55
+Optional:
+  [ ] TP-Link Kasa KP115 smart plug (for heater)       ×1
+
+Total: ~$45–55 (or ~$60–75 with smart plug)
 ```
 
 ---

@@ -135,6 +135,18 @@ The dashboard shows per-device cards with live temperature, estimated gravity,
 ambient conditions, relay states, and 24-hour trend charts. Data persists in
 SQLite. Batches can be created and tracked.
 
+### Smart Plug (optional — no mains wiring)
+
+Instead of wiring a heater through the relay module, use a TP-Link Kasa smart
+plug (e.g. KP115). The dashboard controls it over your local network via
+[python-kasa](https://github.com/python-kasa/python-kasa). The KP115 also
+reports power consumption, which is shown on the dashboard.
+
+```bash
+export KASA_HEATER_HOST=192.168.1.50   # IP of your Kasa plug
+python -m zymoscope.server
+```
+
 ### Docker Stack (optional)
 
 If you want Mosquitto + InfluxDB + Grafana alongside the web app:

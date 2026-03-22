@@ -320,7 +320,79 @@ Press `Ctrl+]` to exit the serial monitor.
 
 ---
 
-## Step 5: Start the Web Dashboard
+## Step 5: Smart Plug Setup (optional — recommended)
+
+Instead of wiring a heater or cooler through the relay module's screw
+terminals (which means cutting mains cables), you can use a TP-Link Kasa
+smart plug (e.g. KP115) on your local network. The dashboard controls it
+automatically based on the PID relay output — no mains wiring required.
+
+### What you need
+
+- A **TP-Link Kasa KP115** (or KP125, HS110, or similar Kasa plug with
+  energy monitoring). ~$15–20 on Amazon.
+- The plug set up on your Wi-Fi via the Kasa app (one-time setup).
+- The plug's IP address on your local network.
+
+### Find the plug's IP
+
+After setting it up with the Kasa app:
+
+```bash
+# Install python-kasa (already in requirements.txt)
+pip install python-kasa
+
+# Discover Kasa devices on your network
+kasa discover
+```
+
+You'll see output like:
+
+```
+== KP115(US) - Heater ==
+Host: 192.168.1.50
+...
+```
+
+Note the IP address.
+
+### Configure the dashboard
+
+Set the plug's IP as an environment variable before starting the dashboard:
+
+```bash
+# For a heater plug (controlled by relay 1 / PID heat output)
+export KASA_HEATER_HOST=192.168.1.50
+
+# For a cooler plug (controlled by relay 2 / PID cool output)
+export KASA_COOLER_HOST=192.168.1.51
+
+# Or add both to dashboard/.env if using Docker Compose
+```
+
+When the ESP32 PID controller activates relay 1 (heat) or relay 2 (cool),
+the dashboard automatically turns the corresponding smart plug on or off.
+The KP115 also reports power consumption, which is shown in the dashboard
+sidebar.
+
+### Usage
+
+1. Plug your seedling heat mat (or space heater, heat wrap, etc.) into the
+   Kasa smart plug
+2. Set the environment variable and start the dashboard
+3. The sidebar shows a "Smart Plugs" section with on/off toggle, and
+   power/voltage/current readings (KP115 only)
+4. The PID controller drives the plug automatically — no manual toggling
+   needed during normal operation
+
+> **Why this is better than relay wiring:** No cutting mains cables, no
+> risk of bad connections, and you get energy monitoring for free. The
+> relay module still works for low-voltage DC loads (fans, pumps, LED
+> strips).
+
+---
+
+## Step 6: Start the Web Dashboard
 
 In a new terminal on your laptop:
 
@@ -350,7 +422,7 @@ If you don't see a device card, check:
 
 ---
 
-## Step 6: Mount the Load Cell
+## Step 7: Mount the Load Cell
 
 This is the gravity estimation sensor. It measures weight loss as CO2
 escapes during fermentation.
@@ -401,15 +473,15 @@ loss*, so absolute accuracy matters less than consistency.
 
 ---
 
-## Step 7: Start a Fermentation
+## Step 8: Start a Fermentation
 
-### 7a: Prepare your vessel
+### 8a: Prepare your vessel
 
 Whatever you're fermenting — beer, kombucha, cider, mead, hot sauce, etc.
 A 1-gallon glass jug or a small fermentation bucket works well for the
 prototype.
 
-### 7b: Position the sensors
+### 8b: Position the sensors
 
 1. Place the vessel on the load cell platform
 2. Dip the DS18B20 probe into the liquid (use the airlock hole or tape it
@@ -417,14 +489,14 @@ prototype.
 3. The BME280 stays on the breadboard — it reads ambient room conditions
 4. The OLED sits on the breadboard — it shows live status
 
-### 7c: Power on and tare
+### 8c: Power on and tare
 
 1. Plug in the ESP32 via USB
 2. Wait for the boot sequence — it will auto-tare the scale
 3. Check the serial monitor to confirm readings look sane
 4. Check the web dashboard — you should see the device card with live data
 
-### 7d: Create a batch in the dashboard
+### 8d: Create a batch in the dashboard
 
 Open http://localhost:8000 and use the "New Batch" form:
 
@@ -432,7 +504,7 @@ Open http://localhost:8000 and use the "New Batch" form:
 - **Style:** "IPA", "Kombucha", "Cider", etc.
 - **OG:** your original gravity reading (from a hydrometer, if you have one)
 
-### 7e: Walk away
+### 8e: Walk away
 
 The system now runs autonomously:
 
@@ -451,7 +523,7 @@ Check in on the dashboard periodically. A typical ale fermentation shows:
 
 ---
 
-## Step 8: Adjust the Temperature Setpoint (optional)
+## Step 9: Adjust the Temperature Setpoint (optional)
 
 If you have a heater or cooler connected to the relays, you can change the
 PID setpoint remotely via MQTT:
@@ -497,8 +569,9 @@ Once your prototype is running and tracking a fermentation:
 
 - **Add more DS18B20 probes** — the firmware supports up to 4 on the same bus.
   Just wire additional probes to the same GPIO 4 + 3.3V + GND lines.
-- **Connect actual heating/cooling** — wire a heat wrap or mini fridge plug
-  through the relay screw terminals (be careful with mains voltage!).
+- **Connect actual heating/cooling** — use a Kasa smart plug (see Step 5)
+  for safe, no-wiring temperature control. Or wire low-voltage DC loads
+  through the relay screw terminals directly.
 - **Run it on a Pi** — move the dashboard to a Raspberry Pi with a small
   screen for a dedicated brewing station.
 - **Add a camera** — a Pi Camera Module can track krausen height and color.

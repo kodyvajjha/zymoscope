@@ -30,7 +30,8 @@ runs the web app and adds a camera pipeline. The ESP32 node stays dumb.
   - `main/comms/` — Wi-Fi STA + MQTT client
   - `main/app_main.c` — wires everything, runs 3 FreeRTOS tasks
 - `dashboard/` — Python web app
-  - `zymoscope/` — FastAPI server, MQTT subscriber, SQLite DB, config
+  - `zymoscope/` — FastAPI server, MQTT subscriber, SQLite DB, config, smart plug control
+  - `zymoscope/smart_plug.py` — TP-Link Kasa plug control via python-kasa (KP115 energy monitoring)
   - `templates/index.html` — single-file dark-themed SPA (Chart.js, vanilla JS)
   - `docker-compose.yml` — optional Mosquitto + InfluxDB + Grafana stack
 - `hardware/` — KiCad schematic (placeholder), BOM CSV
@@ -59,6 +60,8 @@ python -m zymoscope.server
 - Default MQTT broker URI: `mqtt://192.168.1.100:1883` (in `firmware/main/app_main.c`)
 - Dashboard runs on port 8000 by default
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
+- Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
+- python-kasa controls TP-Link Kasa plugs locally (no cloud). KP115 provides energy monitoring.
 
 ## Hardware (prototype)
 
@@ -77,6 +80,7 @@ ESP32-DevKitC + breakout modules on a breadboard. ~$45-55 total.
 
 - Firmware compiles and is ready to flash (ESP-IDF v5.2.2)
 - Web dashboard code is complete (not yet tested against live MQTT)
+- Smart plug integration complete (Kasa KP115 — heater/cooler control + energy monitoring)
 - Parts have been ordered but not yet received
 - KiCad schematic is a placeholder skeleton — real PCB design is future work
 

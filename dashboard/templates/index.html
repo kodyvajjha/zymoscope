@@ -92,6 +92,26 @@
   .relay-group { text-align: center; }
   .chart-wrap { height: 180px; }
 
+  /* --- Smart Plug --- */
+  .plug-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1rem; margin-bottom: .6rem;
+  }
+  .plug-card h4 { font-size: .85rem; margin-bottom: .5rem; }
+  .plug-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: .8rem; padding: .2rem 0;
+  }
+  .plug-row .lbl { color: var(--dim); }
+  .plug-row .val { font-weight: 600; }
+  .plug-toggle {
+    background: var(--border); color: var(--text); border: none;
+    padding: .3rem .7rem; border-radius: 4px; cursor: pointer;
+    font-size: .75rem; font-weight: 600;
+  }
+  .plug-toggle.on { background: var(--green); color: #000; }
+  .plug-toggle.off { background: var(--heat); color: #fff; }
+
   .no-devices {
     text-align: center; color: var(--dim); padding: 3rem 1rem;
     font-size: .95rem;
@@ -138,6 +158,10 @@
 
   <aside class="sidebar">
     <div class="card">
+      <h3>Smart Plugs</h3>
+      <div id="plug-section" style="margin-bottom:1rem">
+        <div style="color:var(--dim);font-size:.8rem">No plugs configured</div>
+      </div>
       <h3>Batches</h3>
       <ul class="batch-list" id="batch-list">
         <li style="color:var(--dim)">No batches yet</li>
@@ -353,6 +377,44 @@
     };
   }
   connectWs();
+
+  // -- Smart Plugs --
+  const plugSection = document.getElementById("plug-section");
+
+  async function loadPlugs() {
+    try {
+      const res = await fetch("/api/plugs");
+      const plugs = await res.json();
+      if (!plugs.length) return;
+      plugSection.innerHTML = "";
+      for (const p of plugs) {
+        const div = document.createElement("div");
+        div.className = "plug-card";
+        const powerHtml = p.power_w != null
+          ? `<div class="plug-row"><span class="lbl">Power</span><span class="val">${Number(p.power_w).toFixed(1)} W</span></div>
+             <div class="plug-row"><span class="lbl">Voltage</span><span class="val">${Number(p.voltage_v).toFixed(1)} V</span></div>
+             <div class="plug-row"><span class="lbl">Current</span><span class="val">${Number(p.current_a).toFixed(3)} A</span></div>`
+          : "";
+        div.innerHTML = `
+          <h4>${p.alias || p.host}</h4>
+          <div class="plug-row">
+            <span class="lbl">Status</span>
+            <button class="plug-toggle ${p.is_on ? "on" : "off"}" data-host="${p.host}">${p.is_on ? "ON" : "OFF"}</button>
+          </div>
+          ${powerHtml}
+        `;
+        div.querySelector(".plug-toggle").addEventListener("click", async (e) => {
+          const host = e.target.dataset.host;
+          const action = e.target.classList.contains("on") ? "off" : "on";
+          await fetch(`/api/plugs/${encodeURIComponent(host)}/${action}`, { method: "POST" });
+          setTimeout(loadPlugs, 500);
+        });
+        plugSection.appendChild(div);
+      }
+    } catch {}
+  }
+  loadPlugs();
+  setInterval(loadPlugs, 30000);
 
   // -- Batches --
   async function loadBatches() {
