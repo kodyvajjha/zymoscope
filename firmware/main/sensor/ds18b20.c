@@ -8,6 +8,8 @@
 #include "ds18b20.h"
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"

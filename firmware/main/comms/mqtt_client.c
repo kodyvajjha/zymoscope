@@ -12,7 +12,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include "mqtt_client.h"       /* ESP-IDF mqtt component header */
+#include <mqtt_client.h>       /* ESP-IDF mqtt component header */
+#include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_system.h"
