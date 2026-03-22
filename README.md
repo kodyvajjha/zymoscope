@@ -74,16 +74,16 @@ zymoscope/
 └── README.md
 ```
 
-## Prototype Build (~$40–50)
+## Prototype Build (~$45–55)
 
 No custom PCB needed. Use an ESP32 dev board + breakout modules on a breadboard.
 
-### Order from Mouser / DigiKey (~$14)
+### Order from Mouser / DigiKey (~$20)
 
 | Part | Mouser PN | Qty | ~Price |
 |------|-----------|-----|--------|
 | ESP32-DevKitC-32E | 356-ESP32DEVKITC32E | 1 | $10.00 |
-| DS18B20 waterproof probe | 700-DS18B20+ | 1 | $3.50 |
+| DS18B20 waterproof stainless steel probe | 485-381 | 1 | $10.00 |
 | 4.7 kΩ resistor (1/4W) | 603-MFR-25FBF52-4K7 | 1 | $0.10 |
 | 10 kΩ resistor (1/4W) | 603-MFR-25FBF52-10K | 2 | $0.10 |
 
