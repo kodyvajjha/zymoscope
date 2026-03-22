@@ -16,6 +16,37 @@ Zymoscope monitors and controls fermentation environments using:
 Inspired by the [OpenAg FermentaBot](https://github.com/OpenAgricultureFoundation/fermentabot),
 rebuilt from scratch with custom hardware, real sensor drivers, and a modern web frontend.
 
+## What Can You Ferment With This?
+
+Anything where temperature control and monitoring matter:
+
+- **Koji** — *Aspergillus oryzae* needs 28–32 °C and high humidity for 40–48 hours.
+  The PID holds your incubation chamber steady, the BME280 tracks humidity, and
+  the load cell catches weight loss as the mold metabolizes starch.
+- **Natto** — *Bacillus subtilis* ferments at 38–42 °C for 22–24 hours.
+  Tight temperature control is critical; even a few degrees off produces slimy,
+  under-fermented beans.
+- **Tempeh** — *Rhizopus oligosporus* sporulates at 30–32 °C over 24–48 hours.
+  Too hot and the mold dies; too cold and it stalls. The dashboard shows you
+  exactly when mycelium heat generation kicks in.
+- **Beer / Cider / Mead** — ale yeast (18–22 °C), lager yeast (8–14 °C), or
+  wild/mixed fermentation. Gravity tracking via weight loss tells you when
+  fermentation is done without opening the vessel.
+- **Kombucha** — SCOBY ferments best at 24–28 °C. Track acidification progress
+  over 7–14 days.
+- **Hot Sauce** — lacto-fermented peppers at 20–24 °C. Monitor CO2 off-gassing
+  to know when active fermentation slows.
+- **Sauerkraut / Kimchi** — lacto-fermentation at 18–22 °C. Weight loss tracking
+  shows fermentation activity without disturbing the brine.
+- **Yogurt / Kefir** — hold milk at 40–45 °C (yogurt) or 20–25 °C (kefir).
+  The PID + smart plug keeps a heating pad at the right temperature overnight.
+- **Bread / Sourdough** — proof at a controlled 24–28 °C. Bulk fermentation
+  and final proof both benefit from consistent temperature.
+
+The PID controller works with a seedling heat mat (via smart plug or relay)
+for heating and a small fan or mini fridge for cooling. One sensor node per
+vessel; run multiple nodes reporting to the same dashboard.
+
 ## Architecture
 
 ```
