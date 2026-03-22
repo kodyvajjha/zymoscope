@@ -3,7 +3,7 @@
 ## Overview
 
 This is the **minimum viable prototype**: an ESP32 dev board + breakout sensor
-modules wired on a protoboard. No custom PCB needed. Total cost: **~$40–50**
+modules wired on a protoboard. No custom PCB needed. Total cost: **~$45–55**
 depending on supplier.
 
 The goal is to validate the sensor pipeline, firmware, and web app before
@@ -18,11 +18,11 @@ committing to a PCB revision.
 | # | Part | Mouser PN | Qty | ~Price | Notes |
 |---|------|-----------|-----|--------|-------|
 | 1 | **ESP32-DevKitC-32E** | 356-ESP32DEVKITC32E | 1 | $10.00 | USB-C variant preferred. Any ESP32 dev board with GPIO breakout works. |
-| 2 | **DS18B20 waterproof probe** (1m cable) | 700-DS18B20+ | 1 | $3.50 | Get the pre-wired stainless steel probe version. The bare TO-92 works too but the probe is better for liquids. |
+| 2 | **DS18B20 waterproof stainless steel probe** (1m cable) | 485-381 | 1 | $10.00 | Pre-wired stainless steel probe — required for liquid immersion. |
 | 3 | **4.7 kΩ resistor** (1/4W axial) | 603-MFR-25FBF52-4K7 | 1 | $0.10 | 1-Wire pull-up. Grab a 5-pack. |
 | 4 | **10 kΩ resistor** (1/4W axial) | 603-MFR-25FBF52-10K | 2 | $0.10 | Pull-ups. Grab a 5-pack. |
 
-**Mouser subtotal: ~$14**
+**Mouser subtotal: ~$20**
 
 ### Breakout Modules (cheaper on Amazon or AliExpress)
 
@@ -125,7 +125,7 @@ Amazon:
   [ ] Half-size breadboard (or 7×9 cm protoboard)       ×1
   [ ] Dupont jumper wires (M-M + M-F, 40-pin)          ×1
 
-Total: ~$40–50
+Total: ~$45–55
 ```
 
 ---

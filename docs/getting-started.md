@@ -11,22 +11,19 @@ Place two orders. The Mouser/DigiKey parts are precision components with
 exact part numbers. The Amazon parts are generic breakout boards — any
 equivalent works.
 
-### Mouser order (~$14, ships in 1–2 days)
+### Mouser order (~$20, ships in 1–2 days)
 
 Go to [mouser.com](https://www.mouser.com). Add each part number to your cart:
 
 | Part | Mouser Part Number | Qty |
 |------|--------------------|-----|
 | ESP32-DevKitC-32E dev board | **356-ESP32DEVKITC32E** | 1 |
-| DS18B20 temperature probe | **700-DS18B20+** | 1 |
+| DS18B20 temperature probe | **485-381** | 1 |
 | 4.7 kΩ resistor, 1/4W | **603-MFR-25FBF52-4K7** | 5 (pack) |
 | 10 kΩ resistor, 1/4W | **603-MFR-25FBF52-10K** | 5 (pack) |
 
-> **Note on the DS18B20:** Mouser sells the bare TO-92 chip. For fermentation
-> you want the **waterproof stainless steel probe version** with pre-wired
-> leads (red/yellow/black). Amazon has these for ~$3–5. Search
-> "DS18B20 waterproof probe". Either works — the bare chip is fine for bench
-> testing, but you'll want the probe for actual vessels.
+> **Note:** This is the waterproof stainless steel probe version with
+> pre-wired leads (red/yellow/black). Required for liquid immersion.
 
 ### Amazon order (~$25–30, ships in 1–2 days with Prime)
 
@@ -47,7 +44,7 @@ Search for each item. These are commodity parts — any seller works.
 - A laptop (Linux, macOS, or Windows — for flashing and running the dashboard)
 - A 5V USB power supply or phone charger (1A+)
 
-### Total: ~$40–50
+### Total: ~$45–55
 
 ---
 
@@ -168,9 +165,6 @@ Yellow (DATA)         →   GPIO 4
 Also: place the 4.7 kΩ resistor between GPIO 4 and 3.3V
       (this is the 1-Wire pull-up — required)
 ```
-
-If you have the bare TO-92 chip instead of a probe: pin 1 (left, flat
-side facing you) = GND, pin 2 (center) = DATA, pin 3 (right) = VCC.
 
 ### 3c: Wire the HX711 + load cell
 
