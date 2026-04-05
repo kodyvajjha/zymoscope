@@ -35,7 +35,7 @@ Search for each item. These are commodity parts — any seller works.
 | BME280 breakout | "BME280 breakout board I2C 3.3V" | 1 | **IMPORTANT: verify it says BME280, not BMP280.** The BMP lacks the humidity sensor. Should be a small purple or blue board with 4 pins (VCC, GND, SCL, SDA). |
 | SSD1306 OLED | "SSD1306 0.96 inch OLED I2C 128x64" | 1 | 4-pin I2C version (not SPI). Color doesn't matter — white or blue. |
 | 2-channel relay module | "2 channel 5V relay module optocoupler arduino" | 1 | Opto-isolated, screw terminals on the output side. Should have a VCC/GND/IN1/IN2 header. |
-| Half-size breadboard | "solderless breadboard 400 point" | 1 | Or a 7×9 cm solderable protoboard if you want something more permanent. |
+| Full-size breadboard | "solderless breadboard 830 point" | 1 | **Must be full-size (830 point / 6.5″).** The ESP32-DevKitC is too wide for a half-size (400 point) board — pins eat all the tie-point holes and you can't connect anything. Or use a 7×9 cm solderable protoboard if you want something more permanent. |
 | Jumper wires | "dupont jumper wire kit male male female" | 1 | 40-pin ribbon. Get a pack with both male-male and male-female wires. |
 
 ### What you probably already have
@@ -151,7 +151,9 @@ peripheral at a time — it's easier to debug that way.
 ### 3a: Place the ESP32 dev board
 
 Straddle it across the center channel of the breadboard so the pins go
-into both sides. The USB port should face outward for easy access.
+into both sides. With a full-size (830 point) breadboard, you'll have
+enough free tie-point holes on each side to plug in jumper wires. The
+USB port should face outward for easy access.
 
 ### 3b: Wire the DS18B20 temperature probe
 
