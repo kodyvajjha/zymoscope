@@ -67,3 +67,4 @@ Thumbs.db
 *.swo
 *~
 .vscode/settings.json
+.claude/
