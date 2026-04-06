@@ -25,6 +25,8 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 #include "sensor/ds18b20.h"
 #include "sensor/hx711.h"
@@ -57,6 +59,7 @@ static struct {
     float gravity_est;
     int   relay_heat;
     int   relay_cool;
+    float setpoint;
 } shared;
 
 /* ------------------------------------------------------------------ */
@@ -127,12 +130,16 @@ static void sensor_task(void *arg)
         float bme_t = 0, bme_h = 0, bme_p = 0;
         float weight = 0;
 
-        /* DS18B20 */
+        /* DS18B20 — read first, before any I2C activity */
         if (ds18b20_read_temps(temps, &temp_count) == ESP_OK) {
             for (int i = 0; i < temp_count; i++) {
                 ESP_LOGI(TAG, "DS18B20[%d]: %.2f C", i, temps[i]);
             }
         }
+
+        /* Brief settling delay before I2C sensors to avoid power rail noise
+           coupling into the 1-Wire bus during the last read's tail */
+        vTaskDelay(pdMS_TO_TICKS(50));
 
         /* BME280 */
         if (bme280_read(&bme_t, &bme_h, &bme_p) == ESP_OK) {
@@ -165,8 +172,13 @@ static void sensor_task(void *arg)
         }
 
         /* Update OLED */
-        float display_temp = (temp_count > 0) ? temps[0] : bme_t;
-        oled_show_status(display_temp, sg,
+        float display_temp = (temp_count > 0) ? temps[0] : NAN;
+        float sp = PID_DEFAULT_SETPOINT;
+        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
+            sp = shared.setpoint;
+            xSemaphoreGive(state_mutex);
+        }
+        oled_show_status(display_temp, bme_t, sp,
                          shared.relay_heat, shared.relay_cool,
                          wifi_sta_is_connected());
 
@@ -182,8 +194,27 @@ static void control_task(void *arg)
 {
     (void)arg;
 
+    /* Load setpoint from NVS (persists across reboots) */
+    float initial_sp = PID_DEFAULT_SETPOINT;
+    {
+        nvs_handle_t nvs;
+        if (nvs_open("zymoscope", NVS_READONLY, &nvs) == ESP_OK) {
+            uint32_t raw;
+            if (nvs_get_u32(nvs, "setpoint", &raw) == ESP_OK) {
+                memcpy(&initial_sp, &raw, sizeof(float));
+                ESP_LOGI(TAG, "Loaded setpoint from NVS: %.1f C", initial_sp);
+            }
+            nvs_close(nvs);
+        }
+    }
+
     pid_ctrl_t pid;
-    pid_init(&pid, PID_KP, PID_KI, PID_KD, PID_DEFAULT_SETPOINT);
+    pid_init(&pid, PID_KP, PID_KI, PID_KD, initial_sp);
+
+    if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
+        shared.setpoint = initial_sp;
+        xSemaphoreGive(state_mutex);
+    }
 
     for (;;) {
         /* Check for setpoint commands from MQTT */
@@ -191,6 +222,21 @@ static void control_task(void *arg)
         if (!isnan(new_sp)) {
             pid_set_setpoint(&pid, new_sp);
             ESP_LOGI(TAG, "PID setpoint changed to %.1f C", new_sp);
+
+            /* Persist to NVS */
+            nvs_handle_t nvs;
+            if (nvs_open("zymoscope", NVS_READWRITE, &nvs) == ESP_OK) {
+                uint32_t raw;
+                memcpy(&raw, &new_sp, sizeof(float));
+                nvs_set_u32(nvs, "setpoint", raw);
+                nvs_commit(nvs);
+                nvs_close(nvs);
+            }
+
+            if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
+                shared.setpoint = new_sp;
+                xSemaphoreGive(state_mutex);
+            }
         }
 
         /* Get current fermentation temperature */
@@ -296,6 +342,7 @@ void app_main(void)
     configASSERT(state_mutex);
     memset(&shared, 0, sizeof(shared));
     shared.gravity_est = ASSUMED_OG;
+    shared.setpoint = PID_DEFAULT_SETPOINT;
 
     /* ---- Init subsystems ---- */
 
@@ -343,7 +390,7 @@ void app_main(void)
     }
 
     /* Show initial screen */
-    oled_show_status(0, ASSUMED_OG, 0, 0, wifi_sta_is_connected());
+    oled_show_status(0, 0, PID_DEFAULT_SETPOINT, 0, 0, wifi_sta_is_connected());
 
     /* ---- Launch tasks ---- */
     xTaskCreate(sensor_task,    "sensor",    4096, NULL, 5, NULL);

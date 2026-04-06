@@ -23,6 +23,12 @@ static const char *TAG = "ds18b20";
 static uint8_t  rom_codes[DS18B20_MAX_SENSORS][8];
 static int      rom_count = 0;
 
+/* Spinlock for disabling interrupts during timing-critical 1-Wire slots */
+static portMUX_TYPE ow_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* Retry count for CRC failures (noise on breadboard power rails, etc.) */
+#define DS18B20_READ_RETRIES  3
+
 /* ------------------------------------------------------------------ */
 /*  Low-level 1-Wire timing helpers                                   */
 /* ------------------------------------------------------------------ */
@@ -52,12 +58,14 @@ static inline int ow_read_level(void)
  */
 static bool ow_reset(void)
 {
+    portENTER_CRITICAL(&ow_mux);
     ow_low();
     ets_delay_us(480);
     ow_release();
     ets_delay_us(70);
     bool presence = (ow_read_level() == 0);
     ets_delay_us(410);
+    portEXIT_CRITICAL(&ow_mux);
     return presence;
 }
 
@@ -94,22 +102,26 @@ static int ow_read_bit(void)
 /** Write a full byte (LSB first). */
 static void ow_write_byte(uint8_t byte)
 {
+    portENTER_CRITICAL(&ow_mux);
     for (int i = 0; i < 8; i++) {
         ow_write_bit(byte & 1);
         byte >>= 1;
     }
+    portEXIT_CRITICAL(&ow_mux);
 }
 
 /** Read a full byte (LSB first). */
 static uint8_t ow_read_byte(void)
 {
     uint8_t byte = 0;
+    portENTER_CRITICAL(&ow_mux);
     for (int i = 0; i < 8; i++) {
         byte >>= 1;
         if (ow_read_bit()) {
             byte |= 0x80;
         }
     }
+    portEXIT_CRITICAL(&ow_mux);
     return byte;
 }
 
@@ -202,6 +214,9 @@ static int search_roms(void)
                      rom[4], rom[5], rom[6], rom[7]);
         }
 
+        /* Yield to let the IDLE task feed the watchdog */
+        vTaskDelay(pdMS_TO_TICKS(1));
+
         last_discrepancy = next_discrepancy;
         if (last_discrepancy < 0) {
             break;  /* No more branches */
@@ -252,6 +267,7 @@ esp_err_t ds18b20_init(void)
         ow_write_byte(0x00);  /* TH — unused */
         ow_write_byte(0x00);  /* TL — unused */
         ow_write_byte(0x7F);  /* Config: 12-bit resolution */
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     return ESP_OK;
@@ -277,25 +293,37 @@ esp_err_t ds18b20_read_temps(float *temps, int *count)
 
     int read_count = 0;
     for (int i = 0; i < rom_count; i++) {
-        if (!ow_reset()) continue;
+        bool ok = false;
 
-        ow_write_byte(0x55);  /* Match ROM */
-        for (int b = 0; b < 8; b++) ow_write_byte(rom_codes[i][b]);
-        ow_write_byte(0xBE);  /* Read Scratchpad */
+        for (int retry = 0; retry < DS18B20_READ_RETRIES; retry++) {
+            if (!ow_reset()) continue;
 
-        uint8_t scratch[9];
-        for (int b = 0; b < 9; b++) {
-            scratch[b] = ow_read_byte();
+            ow_write_byte(0x55);  /* Match ROM */
+            for (int b = 0; b < 8; b++) ow_write_byte(rom_codes[i][b]);
+            ow_write_byte(0xBE);  /* Read Scratchpad */
+
+            uint8_t scratch[9];
+            for (int b = 0; b < 9; b++) {
+                scratch[b] = ow_read_byte();
+            }
+
+            if (crc8(scratch, 8) != scratch[8]) {
+                ESP_LOGW(TAG, "CRC mismatch on sensor %d (attempt %d/%d)",
+                         i, retry + 1, DS18B20_READ_RETRIES);
+                continue;
+            }
+
+            int16_t raw = (int16_t)((scratch[1] << 8) | scratch[0]);
+            temps[read_count] = (float)raw / 16.0f;
+            read_count++;
+            ok = true;
+            break;
         }
 
-        if (crc8(scratch, 8) != scratch[8]) {
-            ESP_LOGW(TAG, "CRC mismatch on sensor %d, skipping", i);
-            continue;
+        if (!ok) {
+            ESP_LOGW(TAG, "Sensor %d: all %d read attempts failed",
+                     i, DS18B20_READ_RETRIES);
         }
-
-        int16_t raw = (int16_t)((scratch[1] << 8) | scratch[0]);
-        temps[read_count] = (float)raw / 16.0f;
-        read_count++;
     }
 
     *count = read_count;

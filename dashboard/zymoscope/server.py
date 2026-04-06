@@ -84,8 +84,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     devices = await db.get_devices()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "devices": devices,
         "latest": mqtt_sub.latest,
     })

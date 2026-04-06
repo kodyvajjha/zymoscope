@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 import aiosqlite
@@ -12,16 +13,20 @@ from .config import settings
 _DB_PATH: str = settings.DB_PATH
 
 
-async def _get_conn() -> aiosqlite.Connection:
+@asynccontextmanager
+async def _get_conn():
     conn = await aiosqlite.connect(_DB_PATH)
     conn.row_factory = aiosqlite.Row
     await conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    try:
+        yield conn
+    finally:
+        await conn.close()
 
 
 async def init_db() -> None:
     """Create tables if they do not exist."""
-    async with await _get_conn() as db:
+    async with _get_conn() as db:
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS devices (
@@ -76,7 +81,7 @@ async def init_db() -> None:
 async def insert_telemetry(data: dict[str, Any]) -> None:
     """Insert a telemetry row and upsert the device record."""
     device_id = data.get("device_id", "unknown")
-    async with await _get_conn() as db:
+    async with _get_conn() as db:
         await db.execute(
             """
             INSERT OR IGNORE INTO devices (device_id, name)
@@ -112,7 +117,7 @@ async def get_recent_telemetry(
 ) -> list[dict[str, Any]]:
     """Return telemetry rows for a device within the last *hours* hours."""
     cutoff = time.time() - hours * 3600
-    async with await _get_conn() as db:
+    async with _get_conn() as db:
         cursor = await db.execute(
             """
             SELECT * FROM telemetry
@@ -127,7 +132,7 @@ async def get_recent_telemetry(
 
 async def get_devices() -> list[dict[str, Any]]:
     """Return all registered devices."""
-    async with await _get_conn() as db:
+    async with _get_conn() as db:
         cursor = await db.execute(
             "SELECT * FROM devices ORDER BY created_at DESC"
         )
@@ -137,7 +142,7 @@ async def get_devices() -> list[dict[str, Any]]:
 
 async def create_batch(data: dict[str, Any]) -> int:
     """Insert a new batch and return its id."""
-    async with await _get_conn() as db:
+    async with _get_conn() as db:
         cursor = await db.execute(
             """
             INSERT INTO batches (device_id, name, style, og, notes)
@@ -157,7 +162,7 @@ async def create_batch(data: dict[str, Any]) -> int:
 
 async def get_batches() -> list[dict[str, Any]]:
     """Return all batches, newest first."""
-    async with await _get_conn() as db:
+    async with _get_conn() as db:
         cursor = await db.execute(
             "SELECT * FROM batches ORDER BY started_at DESC"
         )

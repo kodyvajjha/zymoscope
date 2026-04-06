@@ -137,7 +137,7 @@ esp_err_t mqtt_publish_telemetry(const telemetry_t *data)
     char json[512];
     int pos = 0;
 
-    pos += snprintf(json + pos, sizeof(json) - pos, "{\"temps\":[");
+    pos += snprintf(json + pos, sizeof(json) - pos, "{\"temp_c\":[");
     for (int i = 0; i < data->temp_count && i < DS18B20_MAX_SENSORS; i++) {
         if (i > 0) pos += snprintf(json + pos, sizeof(json) - pos, ",");
         pos += snprintf(json + pos, sizeof(json) - pos, "%.2f", data->temp_c[i]);

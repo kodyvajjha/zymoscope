@@ -25,5 +25,5 @@ void oled_clear(void);
 /**
  * Draw a status screen with the main fermentation telemetry.
  */
-void oled_show_status(float temp, float gravity_est,
-                      int relay1, int relay2, bool wifi_connected);
+void oled_show_status(float temp, float ambient_temp, float setpoint,
+                      int heater, int cooler, bool wifi_connected);

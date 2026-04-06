@@ -75,7 +75,6 @@
   .metric .val { font-size: 1.8rem; font-weight: 700; }
   .metric .lbl { font-size: .7rem; color: var(--dim); text-transform: uppercase; }
   .metric.temp .val { color: var(--heat); }
-  .metric.gravity .val { color: var(--accent); }
   .secondary {
     display: flex; gap: 1rem; justify-content: center;
     font-size: .8rem; color: var(--dim); margin-bottom: .6rem;
@@ -139,6 +138,14 @@
     font-size: .85rem; font-weight: 600;
   }
   button.btn:hover { filter: brightness(1.15); }
+  .setpoint-ctrl { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
+  .setpoint-ctrl input {
+    width: 5rem; padding: .4rem .5rem; text-align: center;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; font-size: 1rem; font-weight: 600;
+  }
+  .setpoint-ctrl .unit { color: var(--dim); font-size: .85rem; }
+  .setpoint-ctrl .current { color: var(--dim); font-size: .75rem; }
 </style>
 </head>
 <body>
@@ -158,6 +165,12 @@
 
   <aside class="sidebar">
     <div class="card">
+      <h3>Target Temperature</h3>
+      <div class="setpoint-ctrl">
+        <input type="number" id="setpoint-input" step="0.5" min="0" max="40" value="20.0">
+        <span class="unit">&deg;C</span>
+        <button class="btn" id="setpoint-btn">Set</button>
+      </div>
       <h3>Smart Plugs</h3>
       <div id="plug-section" style="margin-bottom:1rem">
         <div style="color:var(--dim);font-size:.8rem">No plugs configured</div>
@@ -208,6 +221,27 @@
   const batchList = document.getElementById("batch-list");
   const deviceSelect = document.getElementById("device-select");
   const batchForm = document.getElementById("batch-form");
+  const setpointInput = document.getElementById("setpoint-input");
+  const setpointBtn = document.getElementById("setpoint-btn");
+
+  // -- setpoint control --
+  setpointBtn.addEventListener("click", async () => {
+    const val = parseFloat(setpointInput.value);
+    if (isNaN(val)) return;
+    // Send to the first known device
+    const ids = Object.keys(devices);
+    if (!ids.length) { alert("No device connected"); return; }
+    const id = ids[0];
+    try {
+      const res = await fetch(`/api/cmd/${encodeURIComponent(id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setpoint: val }),
+      });
+      const j = await res.json();
+      if (j.error) alert(j.error);
+    } catch (e) { alert("Failed: " + e); }
+  });
 
   // -- helpers --
   function fmtTemp(tc) {
@@ -219,7 +253,6 @@
     if (Array.isArray(tc)) return tc.length ? Number(tc[0]).toFixed(1) : "--";
     return Number(tc).toFixed(1);
   }
-  function fmtGrav(g) { return g != null ? Number(g).toFixed(3) : "--"; }
   function fmtVal(v, d) { return v != null ? Number(v).toFixed(d || 1) : "--"; }
 
   // -- build a device card --
@@ -235,7 +268,6 @@
       </div>
       <div class="metrics">
         <div class="metric temp"><div class="val" data-f="temp">--</div><div class="lbl">Temp &deg;C</div></div>
-        <div class="metric gravity"><div class="val" data-f="gravity">--</div><div class="lbl">Est. Gravity</div></div>
       </div>
       <div class="secondary">
         <span>Humidity: <b data-f="humidity">--</b>%</span>
@@ -256,7 +288,6 @@
         labels: [],
         datasets: [
           { label: "Temp C", data: [], borderColor: "#e05040", borderWidth: 1.5, pointRadius: 0, tension: 0.3, yAxisID: "y" },
-          { label: "Gravity", data: [], borderColor: "#f0a020", borderWidth: 1.5, pointRadius: 0, tension: 0.3, yAxisID: "y1" },
         ]
       },
       options: {
@@ -266,12 +297,11 @@
         scales: {
           x: { display: true, ticks: { color: "#555", maxTicksLimit: 6, font: { size: 9 } }, grid: { color: "#222" } },
           y:  { position: "left",  ticks: { color: "#e05040", font: { size: 9 } }, grid: { color: "#222" }, title: { display: false } },
-          y1: { position: "right", ticks: { color: "#f0a020", font: { size: 9 } }, grid: { drawOnChartArea: false } },
         }
       }
     });
 
-    const entry = { el: card, chart, labels: [], temps: [], gravs: [] };
+    const entry = { el: card, chart, labels: [], temps: [] };
     devices[id] = entry;
 
     // Add to device select if not present.
@@ -292,7 +322,6 @@
     const q = (sel) => el.querySelector(`[data-f="${sel}"]`);
 
     q("temp").textContent = fmtTemp(d.temp_c);
-    q("gravity").textContent = fmtGrav(d.gravity_est);
     q("humidity").textContent = fmtVal(d.humidity, 1);
     q("pressure").textContent = fmtVal(d.pressure, 1);
     q("rssi").textContent = d.rssi != null ? d.rssi + " dBm" : "";
@@ -304,20 +333,17 @@
     const ts = d.timestamp ? new Date(d.timestamp * 1000) : new Date();
     const label = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const tempVal = parseTemp(d.temp_c);
-    const gravVal = d.gravity_est != null ? Number(d.gravity_est) : null;
 
     entry.labels.push(label);
     entry.temps.push(tempVal);
-    entry.gravs.push(gravVal);
 
     // Keep last 500 points.
     if (entry.labels.length > 500) {
-      entry.labels.shift(); entry.temps.shift(); entry.gravs.shift();
+      entry.labels.shift(); entry.temps.shift();
     }
 
     entry.chart.data.labels = entry.labels;
     entry.chart.data.datasets[0].data = entry.temps;
-    entry.chart.data.datasets[1].data = entry.gravs;
     entry.chart.update("none");
   }
 
@@ -343,16 +369,14 @@
       const entry = devices[id];
       if (!entry || !rows.length) return;
 
-      entry.labels.length = 0; entry.temps.length = 0; entry.gravs.length = 0;
+      entry.labels.length = 0; entry.temps.length = 0;
       for (const r of rows) {
         const ts = new Date(r.timestamp * 1000);
         entry.labels.push(ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
         entry.temps.push(parseTemp(r.temp_c));
-        entry.gravs.push(r.gravity_est != null ? Number(r.gravity_est) : null);
       }
       entry.chart.data.labels = entry.labels;
       entry.chart.data.datasets[0].data = entry.temps;
-      entry.chart.data.datasets[1].data = entry.gravs;
       entry.chart.update("none");
     } catch (e) { console.warn("fetchHistory failed", e); }
   }

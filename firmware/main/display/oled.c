@@ -7,6 +7,7 @@
 
 #include "oled.h"
 
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include "driver/i2c.h"
@@ -235,33 +236,39 @@ void oled_clear(void)
     oled_flush();
 }
 
-void oled_show_status(float temp, float gravity_est,
-                      int relay1, int relay2, bool wifi_connected)
+void oled_show_status(float temp, float ambient_temp, float setpoint,
+                      int heater, int cooler, bool wifi_connected)
 {
     memset(fb, 0, FB_SIZE);
 
-    char line[17]; /* 128/8 = 16 chars max + NUL */
+    char line[32];
 
     /* Line 0: Title */
     fb_puts(0, 0, "Zymoscope");
 
-    /* Line 1: blank separator */
+    /* Line 2: Fermentation temperature */
+    if (isnan(temp)) {
+        fb_puts(0, 2, "Tmp:    -- C");
+    } else {
+        snprintf(line, sizeof(line), "Tmp: %5.1f C", temp);
+        fb_puts(0, 2, line);
+    }
 
-    /* Line 2: Temperature */
-    snprintf(line, sizeof(line), "Tmp: %5.1fC", temp);
-    fb_puts(0, 2, line);
-
-    /* Line 3: Estimated gravity (SG) */
-    snprintf(line, sizeof(line), "SG:  %5.3f", gravity_est);
+    /* Line 3: Ambient temperature */
+    snprintf(line, sizeof(line), "Amb: %5.1f C", ambient_temp);
     fb_puts(0, 3, line);
 
-    /* Line 4: Relay states */
-    snprintf(line, sizeof(line), "Heat:%d Cool:%d",
-             relay1 ? 1 : 0, relay2 ? 1 : 0);
+    /* Line 4: Target setpoint */
+    snprintf(line, sizeof(line), "Tgt: %5.1f C", setpoint);
     fb_puts(0, 4, line);
 
-    /* Line 6: Wi-Fi status */
-    fb_puts(0, 6, wifi_connected ? "WiFi: OK" : "WiFi: --");
+    /* Line 5: Plug states */
+    snprintf(line, sizeof(line), "Heat:%-3s Cool:%s",
+             heater ? "ON" : "OFF", cooler ? "ON" : "OFF");
+    fb_puts(0, 5, line);
+
+    /* Line 7: Wi-Fi status */
+    fb_puts(0, 7, wifi_connected ? "WiFi: OK" : "WiFi: --");
 
     oled_flush();
 }

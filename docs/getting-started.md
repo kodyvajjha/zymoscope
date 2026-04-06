@@ -20,22 +20,21 @@ Go to [mouser.com](https://www.mouser.com). Add each part number to your cart:
 | ESP32-DevKitC-32E dev board | **356-ESP32DEVKITC32E** | 1 |
 | DS18B20 temperature probe | **485-381** | 1 |
 | 4.7 kΩ resistor, 1/4W | **603-MFR-25FBF52-4K7** | 5 (pack) |
-| 10 kΩ resistor, 1/4W | **603-MFR-25FBF52-10K** | 5 (pack) |
 
 > **Note:** This is the waterproof stainless steel probe version with
 > pre-wired leads (red/yellow/black). Required for liquid immersion.
 
-### Amazon order (~$25–30, ships in 1–2 days with Prime)
+### Amazon order (~$25–35, ships in 1–2 days with Prime)
 
 Search for each item. These are commodity parts — any seller works.
 
 | Part | What to Search | Qty | Tips |
 |------|---------------|-----|------|
-| HX711 + load cell kit | "HX711 load cell kit 5kg" | 1 | Must include the HX711 breakout board AND the aluminum bar-style load cell. Usually comes as a bundle for $8–10. |
-| BME280 breakout | "BME280 breakout board I2C 3.3V" | 1 | **IMPORTANT: verify it says BME280, not BMP280.** The BMP lacks the humidity sensor. Should be a small purple or blue board with 4 pins (VCC, GND, SCL, SDA). |
-| SSD1306 OLED | "SSD1306 0.96 inch OLED I2C 128x64" | 1 | 4-pin I2C version (not SPI). Color doesn't matter — white or blue. |
-| 2-channel relay module | "2 channel 5V relay module optocoupler arduino" | 1 | Opto-isolated, screw terminals on the output side. Should have a VCC/GND/IN1/IN2 header. |
-| Full-size breadboard | "solderless breadboard 830 point" | 1 | **Must be full-size (830 point / 6.5″).** The ESP32-DevKitC is too wide for a half-size (400 point) board — pins eat all the tie-point holes and you can't connect anything. Or use a 7×9 cm solderable protoboard if you want something more permanent. |
+| TP-Link Kasa KP115 smart plug | "TP-Link Kasa KP115" | 1 | The KP115 includes energy monitoring (power/voltage/current shown on the dashboard). KP125 or HS110 also work. ~$15–20. |
+| BME280 breakout | "BME280 breakout board I2C 3.3V" | 1 | **IMPORTANT: verify it says BME280, not BMP280.** The BMP lacks the humidity sensor. Should be a small purple or blue board with 4 pins (VCC, GND, SCL, SDA). **Solder the header pins** — resting the board on unsoldered pins causes noise that corrupts the DS18B20. |
+| SSD1306 OLED | "SSD1306 0.96 inch OLED I2C 128x64" | 1 | 4-pin I2C version (not SPI). Color doesn't matter — white or blue. **Solder header pins.** |
+| Seedling heat mat | "seedling heat mat" | 1 | Plugs into the Kasa smart plug. The PID controller turns it on/off to maintain target temperature. |
+| Breadboard | "solderless breadboard 830 point" or "400 tie point breadboard" | 1 | Full-size (830 point) is easiest for the ESP32-DevKitC. Half-size works if you run power/ground off-board. |
 | Jumper wires | "dupont jumper wire kit male male female" | 1 | 40-pin ribbon. Get a pack with both male-male and male-female wires. |
 
 ### What you probably already have
@@ -44,7 +43,15 @@ Search for each item. These are commodity parts — any seller works.
 - A laptop (Linux, macOS, or Windows — for flashing and running the dashboard)
 - A 5V USB power supply or phone charger (1A+)
 
-### Total: ~$45–55
+### Optional extras
+
+| Part | What to Search | Notes |
+|------|---------------|-------|
+| HX711 + 5 kg load cell kit | "HX711 load cell kit 5kg" | For gravity estimation via weight loss. Not needed for basic temperature control. |
+| 2-channel relay module | "2 channel 5V relay module optocoupler" | For direct low-voltage DC control (fans, pumps, LED strips). Not needed if using the Kasa smart plug. |
+| 10 kΩ resistor, 1/4W | 603-MFR-25FBF52-10K (Mouser) | Only needed if using the HX711. |
+
+### Total: ~$40–55
 
 ---
 
@@ -69,6 +76,19 @@ cd esp-idf
 source export.sh    # run this in every new terminal, or add to .bashrc
 ```
 
+**Arch Linux:**
+
+```bash
+sudo pacman -S git wget flex bison gperf python cmake ninja ccache \
+  libffi openssl dfu-util libusb
+
+mkdir -p ~/esp && cd ~/esp
+git clone --recursive https://github.com/espressif/esp-idf.git -b v5.2.2
+cd esp-idf
+./install.sh esp32
+source export.sh
+```
+
 **macOS:**
 
 ```bash
@@ -90,7 +110,7 @@ idf.py --version
 ### 2b: Install Python dependencies (web dashboard)
 
 ```bash
-cd /path/to/zymoscope-v2/dashboard
+cd /path/to/zymoscope/dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -99,27 +119,27 @@ pip install -r requirements.txt
 ### 2c: Install an MQTT broker
 
 The web app and ESP32 communicate via MQTT. You need a broker running
-somewhere on your network. The easiest option:
+somewhere on your network.
 
-**Option A — Docker (recommended):**
+**Option A — Run directly (simplest):**
+
+```bash
+# Install
+sudo pacman -S mosquitto          # Arch
+sudo apt install mosquitto         # Debian/Ubuntu
+brew install mosquitto             # macOS
+
+# Run with the included config
+mosquitto -c /path/to/zymoscope/dashboard/mosquitto/mosquitto.conf
+```
+
+**Option B — Docker:**
 
 ```bash
 docker run -d --name mosquitto \
   -p 1883:1883 \
   eclipse-mosquitto:2 \
   mosquitto -c /mosquitto-no-auth.conf
-```
-
-**Option B — Install directly:**
-
-```bash
-# Debian/Ubuntu
-sudo apt install mosquitto mosquitto-clients
-sudo systemctl enable --now mosquitto
-
-# macOS
-brew install mosquitto
-brew services start mosquitto
 ```
 
 **Option C — Use the included Docker Compose stack:**
@@ -141,6 +161,17 @@ mosquitto_pub -h localhost -t "test/hello" -m "it works"
 # You should see "it works" appear in the first terminal
 ```
 
+### 2d: Set up the Kasa smart plug
+
+1. Plug in the KP115 and set it up on your Wi-Fi using the Kasa app (one-time)
+2. Find its IP address:
+
+```bash
+kasa discover
+```
+
+Note the IP address — you'll need it when starting the dashboard.
+
 ---
 
 ## Step 3: Wire the Hardware
@@ -148,12 +179,14 @@ mosquitto_pub -h localhost -t "test/hello" -m "it works"
 Unpack everything and set it up on the breadboard. Work through one
 peripheral at a time — it's easier to debug that way.
 
+> **Important:** Solder header pins onto the BME280 and OLED modules before
+> wiring. Resting them on unsoldered pins causes intermittent contact that
+> corrupts sensor readings and produces CRC errors.
+
 ### 3a: Place the ESP32 dev board
 
 Straddle it across the center channel of the breadboard so the pins go
-into both sides. With a full-size (830 point) breadboard, you'll have
-enough free tie-point holes on each side to plug in jumper wires. The
-USB port should face outward for easy access.
+into both sides. The USB port should face outward for easy access.
 
 ### 3b: Wire the DS18B20 temperature probe
 
@@ -168,31 +201,7 @@ Also: place the 4.7 kΩ resistor between GPIO 4 and 3.3V
       (this is the 1-Wire pull-up — required)
 ```
 
-### 3c: Wire the HX711 + load cell
-
-First, connect the load cell wires to the HX711 breakout board:
-
-```
-Load cell wire    →   HX711 board
-──────────────────────────────────
-Red               →   E+
-Black             →   E-
-White             →   A+
-Green             →   A-
-```
-
-Then connect the HX711 breakout to the ESP32:
-
-```
-HX711 pin         →   ESP32
-──────────────────────────────────
-VCC               →   3.3V
-GND               →   GND
-SCK               →   GPIO 18
-DT (DOUT)         →   GPIO 19
-```
-
-### 3d: Wire the BME280 (ambient sensor)
+### 3c: Wire the BME280 (ambient sensor)
 
 ```
 BME280 pin        →   ESP32
@@ -203,7 +212,11 @@ SDA               →   GPIO 21
 SCL               →   GPIO 22
 ```
 
-### 3e: Wire the SSD1306 OLED
+> **Tip:** Run separate power jumpers from the ESP32 3.3V pin to each sensor
+> rather than daisy-chaining them on one breadboard power rail. This reduces
+> noise coupling between the BME280 and DS18B20.
+
+### 3d: Wire the SSD1306 OLED
 
 Shares the same I2C bus as the BME280 — wire to the same GPIO 21 / 22:
 
@@ -218,30 +231,21 @@ SCL               →   GPIO 22  (same wire row as BME280 SCL)
 
 Both devices coexist on the same bus (BME280 @ address 0x76, OLED @ 0x3C).
 
-### 3f: Wire the relay module
+### 3e: Set up the Kasa smart plug
 
-```
-Relay module pin  →   ESP32
-──────────────────────────────────
-VCC               →   5V (the "VIN" pin on the ESP32 dev board)
-GND               →   GND
-IN1               →   GPIO 25  (heater control)
-IN2               →   GPIO 26  (cooler control)
-```
+1. Plug the seedling heat mat into the Kasa smart plug
+2. Plug the smart plug into the wall outlet
+3. The dashboard controls the plug over Wi-Fi — no wiring to the ESP32
 
-> **Important:** The relay module VCC goes to the ESP32's **5V/VIN pin** (not
-> 3.3V). The relay coils need 5V. The signal pins (IN1/IN2) are fine at 3.3V
-> logic. Don't connect AC mains loads yet — just test with the relay clicking
-> for now.
-
-### 3g: Double-check
+### 3f: Double-check
 
 Before powering on:
 
 - [ ] All GND wires go to the same ground rail
-- [ ] 3.3V and 5V are NOT shorted together
+- [ ] 3.3V is not shorted to anything it shouldn't be
 - [ ] The 4.7 kΩ resistor is between GPIO 4 and 3.3V
 - [ ] I2C SDA/SCL wires from BME280 and OLED both go to GPIO 21/22
+- [ ] BME280 and OLED header pins are **soldered**, not just resting
 - [ ] No loose jumper wires touching things they shouldn't
 
 ---
@@ -264,22 +268,22 @@ Edit `firmware/main/comms/wifi_sta.h` and change the defaults:
 
 ### 4b: Set your MQTT broker address
 
+Find the IP of the machine running Mosquitto:
+
+```bash
+# Linux
+ip addr show | grep 'inet 10\.\|inet 192\.'
+
+# macOS
+ipconfig getifaddr en0
+```
+
 Edit `firmware/main/app_main.c` and change the broker URI:
 
 ```c
 #ifndef MQTT_BROKER_URI
 #define MQTT_BROKER_URI "mqtt://192.168.1.100:1883"  // <── your broker IP
 #endif
-```
-
-Use the IP address of the machine running Mosquitto. Find it with:
-
-```bash
-# Linux
-hostname -I
-
-# macOS
-ipconfig getifaddr en0
 ```
 
 ### 4c: Build and flash
@@ -290,7 +294,7 @@ Plug the ESP32 into your laptop via USB.
 # Make sure ESP-IDF is sourced
 source ~/esp/esp-idf/export.sh
 
-cd /path/to/zymoscope-v2/firmware
+cd /path/to/zymoscope/firmware
 
 idf.py set-target esp32
 idf.py build
@@ -307,103 +311,40 @@ You should see log output like:
 ```
 I (520) zymoscope: Zymoscope v2 starting...
 I (530) zymoscope: Device MAC: AA:BB:CC:DD:EE:FF
-I (780) wifi_sta: Connecting to "YourWiFiName"...
-I (2100) wifi_sta: Connected! IP: 192.168.1.42
-I (3200) mqtt: Connected to mqtt://192.168.1.100:1883
-I (3210) zymoscope: Taring scale...
-I (5200) zymoscope: DS18B20[0]: 22.31 C
-I (5200) zymoscope: BME280: 23.1 C, 45.2% RH, 1013.2 hPa
-I (5200) zymoscope: Weight: 0.0 g
+I (845) wifi_sta: Connecting...
+I (935) wifi:connected with YourWiFiName
+I (875) bme280: BME280 initialised (addr=0x76, I2C port 0)
+I (985) oled: SSD1306 128x64 OLED initialised (addr=0x3C)
+I (1015) ds18b20: Found sensor 1: 2831A37B00000085
+I (2655) mqtt: Connected to broker
 ```
 
-The OLED should light up showing temperature, gravity, and relay states.
-
-Press `Ctrl+]` to exit the serial monitor.
+The OLED should light up showing temperature, target setpoint, and connection
+status. Press `Ctrl+]` to exit the serial monitor.
 
 ---
 
-## Step 5: Smart Plug Setup (optional — recommended)
+## Step 5: Start the Web Dashboard
 
-Instead of wiring a heater or cooler through the relay module's screw
-terminals (which means cutting mains cables), you can use a TP-Link Kasa
-smart plug (e.g. KP115) on your local network. The dashboard controls it
-automatically based on the PID relay output — no mains wiring required.
-
-### What you need
-
-- A **TP-Link Kasa KP115** (or KP125, HS110, or similar Kasa plug with
-  energy monitoring). ~$15–20 on Amazon.
-- The plug set up on your Wi-Fi via the Kasa app (one-time setup).
-- The plug's IP address on your local network.
-
-### Find the plug's IP
-
-After setting it up with the Kasa app:
+### 5a: Start Mosquitto (if not already running)
 
 ```bash
-# Install python-kasa (already in requirements.txt)
-pip install python-kasa
-
-# Discover Kasa devices on your network
-kasa discover
+mosquitto -c /path/to/zymoscope/dashboard/mosquitto/mosquitto.conf
 ```
 
-You'll see output like:
+### 5b: Start the dashboard
 
-```
-== KP115(US) - Heater ==
-Host: 192.168.1.50
-...
-```
-
-Note the IP address.
-
-### Configure the dashboard
-
-Set the plug's IP as an environment variable before starting the dashboard:
+In a new terminal:
 
 ```bash
-# For a heater plug (controlled by relay 1 / PID heat output)
-export KASA_HEATER_HOST=192.168.1.50
-
-# For a cooler plug (controlled by relay 2 / PID cool output)
-export KASA_COOLER_HOST=192.168.1.51
-
-# Or add both to dashboard/.env if using Docker Compose
-```
-
-When the ESP32 PID controller activates relay 1 (heat) or relay 2 (cool),
-the dashboard automatically turns the corresponding smart plug on or off.
-The KP115 also reports power consumption, which is shown in the dashboard
-sidebar.
-
-### Usage
-
-1. Plug your seedling heat mat (or space heater, heat wrap, etc.) into the
-   Kasa smart plug
-2. Set the environment variable and start the dashboard
-3. The sidebar shows a "Smart Plugs" section with on/off toggle, and
-   power/voltage/current readings (KP115 only)
-4. The PID controller drives the plug automatically — no manual toggling
-   needed during normal operation
-
-> **Why this is better than relay wiring:** No cutting mains cables, no
-> risk of bad connections, and you get energy monitoring for free. The
-> relay module still works for low-voltage DC loads (fans, pumps, LED
-> strips).
-
----
-
-## Step 6: Start the Web Dashboard
-
-In a new terminal on your laptop:
-
-```bash
-cd /path/to/zymoscope-v2/dashboard
+cd /path/to/zymoscope/dashboard
 source .venv/bin/activate
 
-# Point it at your MQTT broker (skip if running on the same machine)
-export MQTT_BROKER=localhost
+# Set the Kasa plug IP
+export KASA_HEATER_HOST=192.168.1.50    # your plug's IP from kasa discover
+
+# Optional: for a cooler plug too
+# export KASA_COOLER_HOST=192.168.1.51
 
 python -m zymoscope.server
 ```
@@ -413,139 +354,86 @@ Open **http://localhost:8000** in your browser.
 You should see:
 - A dark-themed dashboard
 - A card for your ESP32 device (identified by its MAC address)
-- Live temperature, estimated gravity, humidity, pressure
-- Relay state indicators (green/red dots)
-- A line chart updating every 30 seconds with temp and gravity
+- Live temperature and ambient readings
+- Heater/cooler state indicators
+- A line chart updating every 30 seconds
+- "Target Temperature" control in the sidebar
 
 If you don't see a device card, check:
 1. Is the ESP32 connected to Wi-Fi? (check serial monitor output)
 2. Is the MQTT broker running?
-3. Is the dashboard's `MQTT_BROKER` env var pointing to the right host?
+3. Is the ESP32's `MQTT_BROKER_URI` pointing to the right IP?
 
 ---
 
-## Step 7: Mount the Load Cell
+## Step 6: Set the Target Temperature
 
-This is the gravity estimation sensor. It measures weight loss as CO2
-escapes during fermentation.
+The PID controller maintains a target temperature by toggling the Kasa smart
+plug (heater) on and off. The default is 20.0 °C.
 
-### Materials
+### From the dashboard
 
-- The aluminum bar load cell from the HX711 kit
-- A flat board (wood, acrylic, or thick cardboard — at least 20 cm long)
-- 2 screws (M4 or M5, usually included in the kit)
-- Something flat for a platform (a small cutting board, piece of acrylic, etc.)
+Use the "Target Temperature" input in the sidebar. Enter a value and click
+**Set**. The OLED will update to show the new target.
 
-### Assembly
+### From the command line
 
-```
-       ┌──────────────────────────────────────────────┐
-       │              flat base board                   │
-       │                                                │
-       │   ┌─ screws ─┐                                │
-       │   ▼          ▼    ┌─── load cell bar ───┐     │
-       │   ██████████████████████████████████████  │     │
-       │   ▲ (fixed end)   ▲ (free end + platform)│     │
-       │                    │                      │     │
-       │                    └── small platform ────┘     │
-       │                        (vessel sits here)       │
-       └─────────────────────────────────────────────────┘
+```bash
+# Replace the device ID with yours (shown in serial monitor or dashboard)
+curl -X POST http://localhost:8000/api/cmd/aabbccddeeff \
+  -H "Content-Type: application/json" \
+  -d '{"setpoint": 25.0}'
 ```
 
-1. Screw the **fixed end** (the end with the arrow pointing toward it, or the
-   end closest to the wires) to one end of the base board
-2. Attach a small flat platform to the **free end** with screws, zip-ties, or
-   strong tape — this is where the vessel sits
-3. Make sure the load cell can flex freely. It should not touch the base board
-   when loaded
+### Via MQTT directly
 
-### Calibration
+```bash
+mosquitto_pub -h localhost \
+  -t "zymoscope/aabbccddeeff/cmd" \
+  -m '{"setpoint": 25.0}'
+```
 
-After mounting, you need to calibrate the scale factor:
-
-1. Power on the ESP32 — it auto-tares on boot (reads with nothing on the
-   platform as zero)
-2. Place a known weight on the platform (e.g., a 500 ml water bottle = ~500 g)
-3. Watch the serial monitor — note the reported weight
-4. If it's off, adjust the scale factor in `firmware/main/sensor/hx711.c`
-   (look for `HX711_DEFAULT_SCALE`) and re-flash
-
-For the prototype, rough calibration is fine. You're tracking *relative weight
-loss*, so absolute accuracy matters less than consistency.
+The setpoint is saved to the ESP32's NVS (non-volatile storage). It persists
+across reboots — you can unplug the laptop and the ESP32 keeps controlling
+temperature at the last setpoint.
 
 ---
 
-## Step 8: Start a Fermentation
+## Step 7: Start a Fermentation
 
-### 8a: Prepare your vessel
+### 7a: Prepare your vessel
 
 Whatever you're fermenting — beer, kombucha, cider, mead, hot sauce, etc.
-A 1-gallon glass jug or a small fermentation bucket works well for the
-prototype.
+A 1-gallon glass jug or a small fermentation bucket works well.
 
-### 8b: Position the sensors
+### 7b: Position the sensors
 
-1. Place the vessel on the load cell platform
-2. Dip the DS18B20 probe into the liquid (use the airlock hole or tape it
+1. Dip the DS18B20 probe into the liquid (use the airlock hole or tape it
    to the outside of the vessel for external temp)
+2. Place the seedling heat mat under or around the vessel, plugged into the
+   Kasa smart plug
 3. The BME280 stays on the breadboard — it reads ambient room conditions
 4. The OLED sits on the breadboard — it shows live status
 
-### 8c: Power on and tare
+### 7c: Power on
 
 1. Plug in the ESP32 via USB
-2. Wait for the boot sequence — it will auto-tare the scale
+2. Wait for the boot sequence
 3. Check the serial monitor to confirm readings look sane
 4. Check the web dashboard — you should see the device card with live data
 
-### 8d: Create a batch in the dashboard
-
-Open http://localhost:8000 and use the "New Batch" form:
-
-- **Name:** something like "IPA batch 3" or "kombucha round 2"
-- **Style:** "IPA", "Kombucha", "Cider", etc.
-- **OG:** your original gravity reading (from a hydrometer, if you have one)
-
-### 8e: Walk away
+### 7d: Walk away
 
 The system now runs autonomously:
 
 - Temperature is logged every 5 seconds
 - Telemetry is published to MQTT every 30 seconds
-- The web dashboard stores and plots everything
-- If you wired up a heater/cooler to the relay screw terminals, the PID
-  controller maintains your setpoint automatically
-- Weight loss is tracked — as CO2 escapes, the gravity estimate drops
+- The PID controller toggles the heat mat via the Kasa plug to maintain
+  your target temperature
+- The web dashboard stores and plots everything (when running)
+- The ESP32 + Kasa plug work independently of the dashboard
 
-Check in on the dashboard periodically. A typical ale fermentation shows:
-- Active phase (days 1–3): temp rises from yeast activity, weight drops
-  rapidly as CO2 is produced
-- Slowing phase (days 4–7): weight loss slows, temp stabilizes
-- Terminal (day 7+): weight and gravity plateau — fermentation is done
-
----
-
-## Step 9: Adjust the Temperature Setpoint (optional)
-
-If you have a heater or cooler connected to the relays, you can change the
-PID setpoint remotely via MQTT:
-
-```bash
-# Find your device MAC (shown in the serial monitor or dashboard)
-# Replace AA:BB:CC:DD:EE:FF with your actual MAC (lowercase, no colons)
-
-mosquitto_pub -h localhost \
-  -t "zymoscope/aabbccddeeff/cmd" \
-  -m '{"setpoint": 18.0}'
-```
-
-Or use the dashboard's command endpoint:
-
-```bash
-curl -X POST http://localhost:8000/api/cmd/aabbccddeeff \
-  -H "Content-Type: application/json" \
-  -d '{"setpoint": 18.0}'
-```
+Check in on the dashboard periodically, or just glance at the OLED.
 
 ---
 
@@ -555,13 +443,62 @@ curl -X POST http://localhost:8000/api/cmd/aabbccddeeff \
 |---------|-------|
 | ESP32 won't flash | Correct USB port? Try holding BOOT button while flashing. Run `ls /dev/tty*` to find the port. |
 | No temperature readings | Is the 4.7 kΩ pull-up resistor in place? Check DS18B20 wire colors. |
-| OLED blank | Is it wired to GPIO 21/22? Check the I2C address — some OLEDs use 0x3D instead of 0x3C. |
-| BME280 reads 0 | Make sure it's a BME280, not BMP280. Check I2C wiring (SDA/SCL not swapped). |
-| HX711 reads garbage | Check load cell wire order (red→E+, black→E-, white→A+, green→A-). These vary by manufacturer — try swapping white and green if readings are unstable. |
+| CRC mismatch errors | Solder the BME280/OLED header pins. Unsoldered pins cause noise on the shared power rail. Use separate 3.3V jumpers for each sensor. |
+| OLED blank | Is it wired to GPIO 21/22? Check the I2C address — some OLEDs use 0x3D instead of 0x3C. Solder the pins. |
+| BME280 reads 0.0 | Likely bad connection during init — solder pins, then reboot. Make sure it's a BME280, not BMP280. |
 | Wi-Fi won't connect | Check SSID/password in wifi_sta.h. ESP32 only supports 2.4 GHz networks. |
-| Dashboard shows no devices | Is Mosquitto running? Is the ESP32 connected to the same network? Check `MQTT_BROKER` env var. |
-| Relay clicks but nothing happens | Check relay module VCC goes to 5V (VIN), not 3.3V. Verify IN1/IN2 trigger polarity (some modules are active-low). |
-| Weight drifts over time | Normal for cheap load cells. Thermal drift is the main cause. Let the cell warm up for 30 min before taring. |
+| Dashboard shows no devices | Is Mosquitto running? Is the ESP32's MQTT_BROKER_URI correct? Check with `mosquitto_sub -t "zymoscope/#"`. |
+| Kasa plug not found | Run `kasa discover`. Make sure the plug is on the same Wi-Fi network. Check KASA_HEATER_HOST env var. |
+| Watchdog timer errors | Normal during early boot if many sensors are initializing. Should resolve after a few seconds. |
+| MQTT keeps reconnecting | Check the Mosquitto log for "already connected" errors. Make sure only one client uses the same ID. |
+
+---
+
+## Optional: HX711 Load Cell (Gravity Estimation)
+
+If you want to estimate specific gravity via weight loss during fermentation,
+add the HX711 + load cell kit.
+
+### Wiring
+
+```
+HX711 pin         →   ESP32
+──────────────────────────────────
+VCC               →   3.3V
+GND               →   GND
+SCK               →   GPIO 18
+DT (DOUT)         →   GPIO 19
+```
+
+Load cell to HX711: Red→E+, Black→E-, White→A+, Green→A-.
+
+### Calibration
+
+1. Power on — the ESP32 auto-tares on boot
+2. Place a known weight on the platform (e.g., 500 ml water = ~500 g)
+3. Adjust `HX711_DEFAULT_SCALE` in `firmware/main/sensor/hx711.c` if needed
+
+---
+
+## Optional: Relay Module (Direct Control)
+
+If you prefer direct low-voltage DC control (fans, pumps, LED strips) instead
+of smart plugs:
+
+### Wiring
+
+```
+Relay module pin  →   ESP32
+──────────────────────────────────
+VCC               →   5V (VIN pin on ESP32)
+GND               →   GND
+IN1               →   GPIO 25  (heater control)
+IN2               →   GPIO 26  (cooler control)
+```
+
+> **Note:** The relay module VCC goes to **5V/VIN**, not 3.3V. Do not connect
+> mains loads to the relay screw terminals unless you know what you're doing.
+> For mains loads, use the Kasa smart plug instead.
 
 ---
 
@@ -571,9 +508,6 @@ Once your prototype is running and tracking a fermentation:
 
 - **Add more DS18B20 probes** — the firmware supports up to 4 on the same bus.
   Just wire additional probes to the same GPIO 4 + 3.3V + GND lines.
-- **Connect actual heating/cooling** — use a Kasa smart plug (see Step 5)
-  for safe, no-wiring temperature control. Or wire low-voltage DC loads
-  through the relay screw terminals directly.
 - **Run it on a Pi** — move the dashboard to a Raspberry Pi with a small
   screen for a dedicated brewing station.
 - **Add a camera** — a Pi Camera Module can track krausen height and color.

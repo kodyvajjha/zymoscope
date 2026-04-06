@@ -11,7 +11,7 @@
 #endif
 
 #ifndef WIFI_PASS
-#define WIFI_PASS "changeme123"
+#define WIFI_PASS "changeme"
 #endif
 
 /**

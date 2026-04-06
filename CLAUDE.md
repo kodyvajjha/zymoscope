@@ -56,8 +56,8 @@ python -m zymoscope.server
 
 - MQTT topics: `zymoscope/<mac>/telemetry`, `zymoscope/<mac>/cmd`, `zymoscope/<mac>/status`
 - ESP32 log tag: `"zymoscope"`
-- Default Wi-Fi SSID placeholder: `ZymoNet` (in `firmware/main/comms/wifi_sta.h`)
 - Default MQTT broker URI: `mqtt://192.168.1.100:1883` (in `firmware/main/app_main.c`)
+- PID setpoint persisted in NVS (`zymoscope` namespace, `setpoint` key)
 - Dashboard runs on port 8000 by default
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
@@ -78,10 +78,12 @@ ESP32-DevKitC + breakout modules on a breadboard. ~$45-55 total.
 
 ## Current status
 
-- Firmware compiles and is ready to flash (ESP-IDF v5.2.2)
-- Web dashboard code is complete (not yet tested against live MQTT)
-- Smart plug integration complete (Kasa KP115 — heater/cooler control + energy monitoring)
-- Parts have been ordered but not yet received
+- Firmware running on ESP32 with DS18B20, BME280, OLED working (ESP-IDF v5.2.2)
+- Web dashboard tested against live MQTT — temperature chart, plug status, setpoint control
+- Kasa KP115 smart plug controlling seedling heat mat via PID
+- DS18B20 driver has critical sections (portENTER_CRITICAL) + retry logic for noise resilience
+- PID setpoint persists in NVS across reboots
+- HX711 load cell and relay module are optional (not wired in current prototype)
 - KiCad schematic is a placeholder skeleton — real PCB design is future work
 
 ## Known issues fixed during development
@@ -90,17 +92,22 @@ ESP32-DevKitC + breakout modules on a breadboard. ~$45-55 total.
 - `mqtt_client.c` had header collision — ESP-IDF's `mqtt_client.h` must be
   included with angle brackets (`<mqtt_client.h>`) not quotes, and needs
   `esp_event.h` for `esp_event_base_t`
+- Unsoldered BME280/OLED header pins cause noise on the shared power rail,
+  corrupting DS18B20 1-Wire reads (CRC mismatches). Fix: solder pins + critical
+  sections in the 1-Wire driver.
+- `db.py` had double-await bug with aiosqlite (`async with await _get_conn()`)
+  — fixed with asynccontextmanager pattern
+- `server.py` TemplateResponse API changed in newer Starlette — request is now
+  the first positional arg
+- Telemetry JSON key was `temps` but dashboard expected `temp_c` — renamed
 
 ## What's next (roadmap)
 
-1. Wire prototype when parts arrive, validate sensors one at a time
-2. Calibrate HX711 load cell with known weight
-3. Test web dashboard against live MQTT data
-4. Raspberry Pi integration + camera module (krausen tracking)
-5. pH probe support
-6. OTA firmware updates
-7. Custom PCB (KiCad, JLCPCB-ready)
-8. 3D-printable enclosure (OpenSCAD)
+1. Raspberry Pi integration + camera module (krausen tracking)
+2. pH probe support
+3. OTA firmware updates
+4. Custom PCB (KiCad, JLCPCB-ready)
+5. 3D-printable enclosure (OpenSCAD)
 
 ## Cleanup needed
 
