@@ -288,6 +288,7 @@
         labels: [],
         datasets: [
           { label: "Temp C", data: [], borderColor: "#e05040", borderWidth: 1.5, pointRadius: 0, tension: 0.3, yAxisID: "y" },
+          { label: "Heater", data: [], borderColor: "#f0a020", borderWidth: 1.2, pointRadius: 0, stepped: true, fill: true, backgroundColor: "rgba(240,160,32,0.08)", yAxisID: "y1" },
         ]
       },
       options: {
@@ -297,11 +298,12 @@
         scales: {
           x: { display: true, ticks: { color: "#555", maxTicksLimit: 6, font: { size: 9 } }, grid: { color: "#222" } },
           y:  { position: "left",  ticks: { color: "#e05040", font: { size: 9 } }, grid: { color: "#222" }, title: { display: false } },
+          y1: { position: "right", min: 0, max: 1, display: false },
         }
       }
     });
 
-    const entry = { el: card, chart, labels: [], temps: [] };
+    const entry = { el: card, chart, labels: [], temps: [], heater: [] };
     devices[id] = entry;
 
     // Add to device select if not present.
@@ -336,14 +338,16 @@
 
     entry.labels.push(label);
     entry.temps.push(tempVal);
+    entry.heater.push(d.relay1 ? 1 : 0);
 
-    // Keep last 500 points.
-    if (entry.labels.length > 500) {
-      entry.labels.shift(); entry.temps.shift();
+    // Keep last 2880 points (~24h at 30s intervals).
+    if (entry.labels.length > 2880) {
+      entry.labels.shift(); entry.temps.shift(); entry.heater.shift();
     }
 
     entry.chart.data.labels = entry.labels;
     entry.chart.data.datasets[0].data = entry.temps;
+    entry.chart.data.datasets[1].data = entry.heater;
     entry.chart.update("none");
   }
 
@@ -369,14 +373,16 @@
       const entry = devices[id];
       if (!entry || !rows.length) return;
 
-      entry.labels.length = 0; entry.temps.length = 0;
+      entry.labels.length = 0; entry.temps.length = 0; entry.heater.length = 0;
       for (const r of rows) {
         const ts = new Date(r.timestamp * 1000);
         entry.labels.push(ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
         entry.temps.push(parseTemp(r.temp_c));
+        entry.heater.push(r.relay1 ? 1 : 0);
       }
       entry.chart.data.labels = entry.labels;
       entry.chart.data.datasets[0].data = entry.temps;
+      entry.chart.data.datasets[1].data = entry.heater;
       entry.chart.update("none");
     } catch (e) { console.warn("fetchHistory failed", e); }
   }
