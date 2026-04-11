@@ -4,6 +4,8 @@ An ESP32-based fermentation monitoring and control system with a real-time web d
 
 ## Overview
 
+![Zymoscope prototype](PXL_20260406_013343601.jpg)
+
 Zymoscope monitors and controls fermentation environments using:
 
 - **Temperature** sensing and PID control (DS18B20 probe + Kasa smart plug for heating/cooling)
