@@ -107,6 +107,13 @@ async def api_telemetry(device_id: str, hours: float = Query(24)):
     return await db.get_recent_telemetry(device_id, hours)
 
 
+@app.get("/api/telemetry/{device_id}/latest")
+async def api_telemetry_latest(device_id: str):
+    """Return the most recent stored row for a device (handy when the node is offline)."""
+    row = await db.get_latest_telemetry(device_id)
+    return row or {}
+
+
 @app.get("/api/batches")
 async def api_batches():
     return await db.get_batches()

@@ -154,6 +154,22 @@ async def get_recent_telemetry(
         return [dict(r) for r in rows]
 
 
+async def get_latest_telemetry(device_id: str) -> dict[str, Any] | None:
+    """Return the most recent telemetry row for a device, or None."""
+    async with _get_conn() as db:
+        cursor = await db.execute(
+            """
+            SELECT * FROM telemetry
+            WHERE device_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (device_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def get_devices() -> list[dict[str, Any]]:
     """Return all registered devices."""
     async with _get_conn() as db:

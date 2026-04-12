@@ -65,6 +65,18 @@
   }
   .card-header h2 { font-size: 1rem; font-weight: 600; }
   .card-header .rssi { font-size: .75rem; color: var(--dim); }
+  .card-header .meta {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  }
+  .last-seen { font-size: .7rem; color: var(--dim); }
+  .last-seen.stale { color: var(--heat); }
+  .last-seen .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: var(--border); color: var(--dim); font-size: .65rem;
+    text-transform: uppercase; letter-spacing: .04em; margin-right: 4px;
+  }
+  .last-seen.stale .badge { background: var(--heat); color: #000; }
+  .card.offline .metric .val { color: var(--dim); }
   .metrics {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -311,7 +323,10 @@
     card.innerHTML = `
       <div class="card-header">
         <h2>${id}</h2>
-        <span class="rssi" data-f="rssi"></span>
+        <div class="meta">
+          <span class="rssi" data-f="rssi"></span>
+          <span class="last-seen" data-f="last-seen"></span>
+        </div>
       </div>
       <div class="metrics">
         <div class="metric temp"><div class="val" data-f="temp">--</div><div class="lbl">Temp &deg;C</div></div>
@@ -399,8 +414,23 @@
     }
 
     updateDeviceCount();
+    fetchLatest(id);
     fetchHistory(id);
     return entry;
+  }
+
+  // Grab the most recent stored row so the metric tiles always show the last
+  // known reading, even if it's outside the current range window.
+  async function fetchLatest(id) {
+    try {
+      const res = await fetch(`/api/telemetry/${encodeURIComponent(id)}/latest`);
+      const row = await res.json();
+      const entry = devices[id];
+      if (!entry || !row || !row.timestamp) return;
+      if (entry.lastSeen == null) {
+        applyMetrics(entry, row, row.timestamp * 1000);
+      }
+    } catch {}
   }
 
   // Format a timestamp appropriately for the currently selected range.
@@ -416,22 +446,51 @@
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  function updateCard(id, d) {
-    const entry = ensureDevice(id);
+  // Fill the metric tiles + last-seen from a telemetry row (live or historical).
+  // Does NOT touch the chart.
+  function applyMetrics(entry, d, tsMs) {
     const el = entry.el;
     const q = (sel) => el.querySelector(`[data-f="${sel}"]`);
-
     q("temp").textContent = fmtTemp(d.temp_c);
     q("humidity").textContent = fmtVal(d.humidity, 1);
     q("pressure").textContent = fmtVal(d.pressure, 1);
     q("rssi").textContent = d.rssi != null ? d.rssi + " dBm" : "";
+    q("relay1").classList.toggle("on", !!d.relay1);
+    q("relay2").classList.toggle("on", !!d.relay2);
+    if (tsMs != null) {
+      entry.lastSeen = tsMs;
+      updateLastSeen(entry);
+    }
+  }
 
-    const r1 = q("relay1"); r1.classList.toggle("on", !!d.relay1);
-    const r2 = q("relay2"); r2.classList.toggle("on", !!d.relay2);
+  // Render the "last seen" tag and toggle the offline style.
+  function updateLastSeen(entry) {
+    const el = entry.el;
+    const tag = el.querySelector('[data-f="last-seen"]');
+    if (!entry.lastSeen) { tag.textContent = ""; return; }
+    const ageSec = Math.max(0, Math.round((Date.now() - entry.lastSeen) / 1000));
+    const stale = ageSec > 120;  // >2min without data -> treat as offline
+    el.classList.toggle("offline", stale);
+    tag.classList.toggle("stale", stale);
+    const badge = stale ? '<span class="badge">offline</span>' : '';
+    tag.innerHTML = badge + "last seen " + humanAge(ageSec);
+  }
+
+  function humanAge(sec) {
+    if (sec < 60) return sec + "s ago";
+    if (sec < 3600) return Math.round(sec / 60) + "m ago";
+    if (sec < 86400) return Math.round(sec / 3600) + "h ago";
+    return Math.round(sec / 86400) + "d ago";
+  }
+
+  function updateCard(id, d) {
+    const entry = ensureDevice(id);
 
     // Append to chart
     const ts = d.timestamp ? new Date(d.timestamp * 1000) : new Date();
     const tempVal = parseTemp(d.temp_c);
+
+    applyMetrics(entry, d, ts.getTime());
 
     entry.timestamps.push(ts);
     entry.labels.push(fmtLabel(ts, entry.rangeHours));
@@ -500,6 +559,14 @@
       entry.chart.data.datasets[0].data = entry.temps;
       entry.chart.data.datasets[1].data = entry.heater;
       entry.chart.update("none");
+
+      // If no live telemetry has arrived yet, seed the metric tiles and the
+      // last-seen indicator from the most recent historical row so the card
+      // reflects whatever the DB has (e.g. last night's amazake run).
+      if (rows.length && entry.lastSeen == null) {
+        const last = rows[rows.length - 1];
+        applyMetrics(entry, last, last.timestamp * 1000);
+      }
     } catch (e) { console.warn("fetchHistory failed", e); }
   }
 
@@ -601,6 +668,11 @@
     } catch {}
   }
   loadDevices();
+
+  // Keep "last seen" labels ticking so the offline badge appears without a refresh.
+  setInterval(() => {
+    for (const id of Object.keys(devices)) updateLastSeen(devices[id]);
+  }, 15000);
 
   // -- Batch form --
   batchForm.addEventListener("submit", async (e) => {
