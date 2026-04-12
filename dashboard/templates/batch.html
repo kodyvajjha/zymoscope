@@ -66,8 +66,8 @@
           {% if batch.style %}<span><b>Style:</b> {{ batch.style }}</span>{% endif %}
           {% if batch.og %}<span><b>OG:</b> {{ "%.3f"|format(batch.og) }}</span>{% endif %}
           <span><b>Device:</b> {{ batch.device_id or "—" }}</span>
-          <span><b>Started:</b> {{ batch.started_at }}</span>
-          <span><b>Ended:</b> {{ batch.ended_at or "in progress" }}</span>
+          <span><b>Started:</b> <span class="ts" data-utc="{{ batch.started_at }}">{{ batch.started_at }}</span></span>
+          <span><b>Ended:</b> <span class="ts" data-utc="{{ batch.ended_at or '' }}">{{ batch.ended_at or "in progress" }}</span></span>
         </div>
         {% if batch.notes %}<div class="notes">{{ batch.notes }}</div>{% endif %}
       </div>
@@ -103,6 +103,14 @@
   "use strict";
   const batchId = {{ batch.id }};
   const batchEnded = {{ 'true' if batch.ended_at else 'false' }};
+
+  // SQLite CURRENT_TIMESTAMP stores UTC with no tz marker; render as local.
+  for (const el of document.querySelectorAll(".ts")) {
+    const raw = el.dataset.utc;
+    if (!raw) continue;
+    const d = new Date(raw.replace(" ", "T") + "Z");
+    if (!isNaN(d)) el.textContent = d.toLocaleString();
+  }
 
   function parseTemp(tc) {
     if (tc == null) return null;
