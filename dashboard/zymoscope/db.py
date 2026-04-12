@@ -75,6 +75,17 @@ async def init_db() -> None:
             )
             """
         )
+        # Per-device state shared across dashboard clients (setpoint, etc).
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS device_state (
+                device_id  TEXT PRIMARY KEY,
+                setpoint   REAL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (device_id) REFERENCES devices(device_id)
+            )
+            """
+        )
         await db.commit()
 
 
@@ -115,17 +126,30 @@ async def insert_telemetry(data: dict[str, Any]) -> None:
 async def get_recent_telemetry(
     device_id: str, hours: float = 24
 ) -> list[dict[str, Any]]:
-    """Return telemetry rows for a device within the last *hours* hours."""
-    cutoff = time.time() - hours * 3600
+    """Return telemetry rows for a device within the last *hours* hours.
+
+    Pass hours <= 0 to fetch the entire history for the device.
+    """
     async with _get_conn() as db:
-        cursor = await db.execute(
-            """
-            SELECT * FROM telemetry
-            WHERE device_id = ? AND timestamp >= ?
-            ORDER BY timestamp ASC
-            """,
-            (device_id, cutoff),
-        )
+        if hours and hours > 0:
+            cutoff = time.time() - hours * 3600
+            cursor = await db.execute(
+                """
+                SELECT * FROM telemetry
+                WHERE device_id = ? AND timestamp >= ?
+                ORDER BY timestamp ASC
+                """,
+                (device_id, cutoff),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT * FROM telemetry
+                WHERE device_id = ?
+                ORDER BY timestamp ASC
+                """,
+                (device_id,),
+            )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
@@ -168,3 +192,40 @@ async def get_batches() -> list[dict[str, Any]]:
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+
+# ---- device state (shared setpoint, etc.) -----------------------------------
+
+async def get_device_state(device_id: str) -> dict[str, Any] | None:
+    """Return the stored state row for a device, or None if not set."""
+    async with _get_conn() as db:
+        cursor = await db.execute(
+            "SELECT * FROM device_state WHERE device_id = ?",
+            (device_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_all_device_state() -> dict[str, dict[str, Any]]:
+    """Return the stored state row for every device, keyed by device_id."""
+    async with _get_conn() as db:
+        cursor = await db.execute("SELECT * FROM device_state")
+        rows = await cursor.fetchall()
+        return {r["device_id"]: dict(r) for r in rows}
+
+
+async def set_setpoint(device_id: str, setpoint: float) -> None:
+    """Upsert the target temperature for a device, shared across clients."""
+    async with _get_conn() as db:
+        await db.execute(
+            """
+            INSERT INTO device_state (device_id, setpoint, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(device_id) DO UPDATE SET
+                setpoint   = excluded.setpoint,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (device_id, setpoint),
+        )
+        await db.commit()

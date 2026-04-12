@@ -90,6 +90,26 @@
   .relay-label { font-size: .7rem; color: var(--dim); text-align: center; }
   .relay-group { text-align: center; }
   .chart-wrap { height: 180px; }
+  .chart-wrap.full { height: 340px; }
+
+  /* --- Time range selector --- */
+  .range-bar {
+    display: flex; gap: .3rem; justify-content: flex-end;
+    margin-bottom: .6rem; flex-wrap: wrap;
+  }
+  .range-bar button {
+    background: var(--bg); color: var(--dim); border: 1px solid var(--border);
+    padding: .25rem .55rem; border-radius: 4px; cursor: pointer;
+    font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+  }
+  .range-bar button:hover { color: var(--text); }
+  .range-bar button.active {
+    background: var(--accent); color: #000; border-color: var(--accent);
+  }
+  .range-bar .expand {
+    margin-left: auto; background: transparent; color: var(--dim);
+  }
+  .range-bar .expand.active { color: var(--accent); border-color: var(--accent); }
 
   /* --- Smart Plug --- */
   .plug-card {
@@ -224,24 +244,51 @@
   const setpointInput = document.getElementById("setpoint-input");
   const setpointBtn = document.getElementById("setpoint-btn");
 
-  // -- setpoint control --
+  // -- setpoint control (persisted server-side so all clients stay in sync) --
+  // We keep one "current" device's setpoint in the shared input. For multi-
+  // device setups this is just the first known device; the server stores a
+  // setpoint per-device regardless.
+  let setpointDirty = false;
+  setpointInput.addEventListener("input", () => { setpointDirty = true; });
+
   setpointBtn.addEventListener("click", async () => {
     const val = parseFloat(setpointInput.value);
     if (isNaN(val)) return;
-    // Send to the first known device
     const ids = Object.keys(devices);
     if (!ids.length) { alert("No device connected"); return; }
     const id = ids[0];
     try {
-      const res = await fetch(`/api/cmd/${encodeURIComponent(id)}`, {
+      const res = await fetch(`/api/setpoint/${encodeURIComponent(id)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ setpoint: val }),
       });
       const j = await res.json();
       if (j.error) alert(j.error);
+      else setpointDirty = false;
     } catch (e) { alert("Failed: " + e); }
   });
+
+  // Apply a stored setpoint from the server without clobbering in-progress edits.
+  function applyStoredSetpoint(value) {
+    if (value == null) return;
+    if (document.activeElement === setpointInput && setpointDirty) return;
+    setpointInput.value = Number(value).toFixed(1);
+  }
+
+  async function loadSetpoint() {
+    try {
+      const res = await fetch("/api/state");
+      const state = await res.json();
+      // Pick the first device's stored setpoint, if any.
+      for (const id of Object.keys(state)) {
+        if (state[id] && state[id].setpoint != null) {
+          applyStoredSetpoint(state[id].setpoint);
+          break;
+        }
+      }
+    } catch {}
+  }
 
   // -- helpers --
   function fmtTemp(tc) {
@@ -277,7 +324,16 @@
         <div class="relay-group"><div class="relay-dot heat" data-f="relay1"></div><div class="relay-label">Heat</div></div>
         <div class="relay-group"><div class="relay-dot cool" data-f="relay2"></div><div class="relay-label">Cool</div></div>
       </div>
-      <div class="chart-wrap"><canvas></canvas></div>
+      <div class="range-bar" data-f="range-bar">
+        <button data-range="1">1h</button>
+        <button data-range="6">6h</button>
+        <button data-range="24" class="active">24h</button>
+        <button data-range="168">7d</button>
+        <button data-range="720">30d</button>
+        <button data-range="0">All</button>
+        <button class="expand" data-f="expand" title="Toggle full history view">Expand</button>
+      </div>
+      <div class="chart-wrap" data-f="chart-wrap"><canvas></canvas></div>
     `;
     devicesEl.appendChild(card);
 
@@ -303,8 +359,37 @@
       }
     });
 
-    const entry = { el: card, chart, labels: [], temps: [], heater: [] };
+    const entry = {
+      el: card,
+      chart,
+      labels: [],
+      temps: [],
+      heater: [],
+      timestamps: [],
+      rangeHours: 24,  // default time window
+      expanded: false,
+    };
     devices[id] = entry;
+
+    // Wire up the per-card time-range selector.
+    const rangeBar = card.querySelector('[data-f="range-bar"]');
+    rangeBar.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button");
+      if (!btn) return;
+      if (btn.dataset.range !== undefined) {
+        const h = Number(btn.dataset.range);
+        entry.rangeHours = h;
+        rangeBar.querySelectorAll("button[data-range]").forEach((b) =>
+          b.classList.toggle("active", b === btn)
+        );
+        fetchHistory(id);
+      } else if (btn.dataset.f === "expand") {
+        entry.expanded = !entry.expanded;
+        btn.classList.toggle("active", entry.expanded);
+        card.querySelector('[data-f="chart-wrap"]').classList.toggle("full", entry.expanded);
+        entry.chart.resize();
+      }
+    });
 
     // Add to device select if not present.
     if (!deviceSelect.querySelector(`option[value="${id}"]`)) {
@@ -316,6 +401,19 @@
     updateDeviceCount();
     fetchHistory(id);
     return entry;
+  }
+
+  // Format a timestamp appropriately for the currently selected range.
+  function fmtLabel(ts, rangeHours) {
+    const d = ts instanceof Date ? ts : new Date(ts);
+    // Ranges > 48h show day+time so the axis stays readable across many hours.
+    if (rangeHours === 0 || rangeHours > 48) {
+      return d.toLocaleString([], {
+        month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      });
+    }
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
   function updateCard(id, d) {
@@ -333,16 +431,22 @@
 
     // Append to chart
     const ts = d.timestamp ? new Date(d.timestamp * 1000) : new Date();
-    const label = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const tempVal = parseTemp(d.temp_c);
 
-    entry.labels.push(label);
+    entry.timestamps.push(ts);
+    entry.labels.push(fmtLabel(ts, entry.rangeHours));
     entry.temps.push(tempVal);
     entry.heater.push(d.relay1 ? 1 : 0);
 
-    // Keep last 2880 points (~24h at 30s intervals).
-    if (entry.labels.length > 2880) {
-      entry.labels.shift(); entry.temps.shift(); entry.heater.shift();
+    // Drop points that have fallen outside the visible window (when bounded).
+    if (entry.rangeHours > 0) {
+      const cutoff = Date.now() - entry.rangeHours * 3600 * 1000;
+      while (entry.timestamps.length && entry.timestamps[0].getTime() < cutoff) {
+        entry.timestamps.shift();
+        entry.labels.shift();
+        entry.temps.shift();
+        entry.heater.shift();
+      }
     }
 
     entry.chart.data.labels = entry.labels;
@@ -365,18 +469,30 @@
     deviceCount.textContent = Object.keys(devices).length;
   }
 
-  // -- fetch historical data for chart --
+  // -- fetch historical data for chart, using the device's active range --
   async function fetchHistory(id) {
     try {
-      const res = await fetch(`/api/telemetry/${encodeURIComponent(id)}?hours=24`);
-      const rows = await res.json();
       const entry = devices[id];
-      if (!entry || !rows.length) return;
+      if (!entry) return;
+      const hours = entry.rangeHours;
+      const res = await fetch(
+        `/api/telemetry/${encodeURIComponent(id)}?hours=${hours}`
+      );
+      const rows = await res.json();
 
-      entry.labels.length = 0; entry.temps.length = 0; entry.heater.length = 0;
-      for (const r of rows) {
+      entry.timestamps.length = 0;
+      entry.labels.length = 0;
+      entry.temps.length = 0;
+      entry.heater.length = 0;
+      // Downsample large series so Chart.js stays responsive (cap ~2000 pts).
+      const cap = 2000;
+      const step = rows.length > cap ? Math.ceil(rows.length / cap) : 1;
+      for (let i = 0; i < rows.length; i++) {
+        if (i % step !== 0 && i !== rows.length - 1) continue;
+        const r = rows[i];
         const ts = new Date(r.timestamp * 1000);
-        entry.labels.push(ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+        entry.timestamps.push(ts);
+        entry.labels.push(fmtLabel(ts, hours));
         entry.temps.push(parseTemp(r.temp_c));
         entry.heater.push(r.relay1 ? 1 : 0);
       }
@@ -398,8 +514,19 @@
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "snapshot" && msg.devices) {
-          for (const [id, d] of Object.entries(msg.devices)) updateCard(id, d);
+        if (msg.type === "snapshot") {
+          if (msg.devices) {
+            for (const [id, d] of Object.entries(msg.devices)) updateCard(id, d);
+          }
+          if (msg.state) {
+            for (const id of Object.keys(msg.state)) {
+              const sp = msg.state[id] && msg.state[id].setpoint;
+              if (sp != null) { applyStoredSetpoint(sp); break; }
+            }
+          }
+        } else if (msg.type === "state") {
+          // Shared-state update from another client — sync our UI.
+          if (msg.setpoint != null) applyStoredSetpoint(msg.setpoint);
         } else if (msg.device_id) {
           updateCard(msg.device_id, msg);
         }
@@ -407,6 +534,7 @@
     };
   }
   connectWs();
+  loadSetpoint();
 
   // -- Smart Plugs --
   const plugSection = document.getElementById("plug-section");
