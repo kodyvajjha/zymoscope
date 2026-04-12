@@ -214,6 +214,50 @@ async def get_batches() -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
+async def get_batch(batch_id: int) -> dict[str, Any] | None:
+    """Return a single batch by id, or None."""
+    async with _get_conn() as db:
+        cursor = await db.execute(
+            "SELECT * FROM batches WHERE id = ?", (batch_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def end_batch(batch_id: int) -> None:
+    """Set ended_at = now for a batch."""
+    async with _get_conn() as db:
+        await db.execute(
+            "UPDATE batches SET ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (batch_id,),
+        )
+        await db.commit()
+
+
+async def get_batch_telemetry(batch_id: int) -> list[dict[str, Any]]:
+    """Return telemetry rows scoped to a batch's device and time window.
+
+    started_at / ended_at are stored as SQLite TIMESTAMP strings (UTC).
+    strftime('%s', ...) converts to unix seconds for comparison against
+    telemetry.timestamp (REAL, unix seconds).
+    """
+    async with _get_conn() as db:
+        cursor = await db.execute(
+            """
+            SELECT t.* FROM telemetry t
+            JOIN batches b ON b.device_id = t.device_id
+            WHERE b.id = ?
+              AND t.timestamp >= CAST(strftime('%s', b.started_at) AS REAL)
+              AND (b.ended_at IS NULL
+                   OR t.timestamp <= CAST(strftime('%s', b.ended_at) AS REAL))
+            ORDER BY t.timestamp ASC
+            """,
+            (batch_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 # ---- device state (shared setpoint, etc.) -----------------------------------
 
 async def get_device_state(device_id: str) -> dict[str, Any] | None:

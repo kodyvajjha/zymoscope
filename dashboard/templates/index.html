@@ -219,7 +219,7 @@
         </div>
         <div class="form-group">
           <label>Device</label>
-          <select name="device_id" id="device-select">
+          <select name="device_id" id="device-select" required>
             <option value="">-- select --</option>
           </select>
         </div>
@@ -650,9 +650,12 @@
       batchList.innerHTML = "";
       for (const b of list) {
         const li = document.createElement("li");
-        li.innerHTML = `<strong>${b.name}</strong> <span class="style">${b.style || ""}</span>` +
+        const active = b.ended_at ? "" : ' <span style="color:var(--green);font-size:.7rem">● live</span>';
+        li.innerHTML = `<a href="/batches/${b.id}" style="color:var(--text);text-decoration:none">` +
+          `<strong>${b.name}</strong>${active} <span class="style">${b.style || ""}</span>` +
           (b.og ? ` &middot; OG ${Number(b.og).toFixed(3)}` : "") +
-          (b.device_id ? ` &middot; ${b.device_id}` : "");
+          (b.device_id ? ` &middot; ${b.device_id}` : "") +
+          `</a>`;
         batchList.appendChild(li);
       }
     } catch {}

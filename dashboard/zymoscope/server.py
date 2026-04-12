@@ -122,8 +122,35 @@ async def api_batches():
 @app.post("/api/batches")
 async def api_create_batch(request: Request):
     data = await request.json()
+    if not data.get("device_id"):
+        return {"error": "device_id is required"}
     batch_id = await db.create_batch(data)
     return {"id": batch_id, "status": "created"}
+
+
+@app.get("/api/batches/{batch_id}")
+async def api_batch(batch_id: int):
+    batch = await db.get_batch(batch_id)
+    return batch or {}
+
+
+@app.get("/api/batches/{batch_id}/telemetry")
+async def api_batch_telemetry(batch_id: int):
+    return await db.get_batch_telemetry(batch_id)
+
+
+@app.post("/api/batches/{batch_id}/end")
+async def api_end_batch(batch_id: int):
+    await db.end_batch(batch_id)
+    return {"status": "ended", "id": batch_id}
+
+
+@app.get("/batches/{batch_id}", response_class=HTMLResponse)
+async def batch_page(request: Request, batch_id: int):
+    batch = await db.get_batch(batch_id)
+    if not batch:
+        return HTMLResponse("Batch not found", status_code=404)
+    return templates.TemplateResponse(request, "batch.html", {"batch": batch})
 
 
 @app.post("/api/cmd/{device_id}")

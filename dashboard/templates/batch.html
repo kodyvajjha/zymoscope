@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ batch.name }} — Zymoscope</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+  :root {
+    --bg:#121218; --surface:#1c1c26; --border:#2a2a3a;
+    --text:#e0e0e8; --dim:#888898; --accent:#f0a020;
+    --heat:#e05040; --cool:#40a0e0; --green:#40c060;
+    --radius:8px;
+  }
+  *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); min-height:100vh;
+  }
+  header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1rem 1.5rem; border-bottom:1px solid var(--border); background:var(--surface);
+  }
+  header h1 { font-size:1.4rem; color:var(--accent); }
+  header a { color:var(--dim); text-decoration:none; font-size:.9rem; }
+  header a:hover { color:var(--text); }
+  main { max-width:1200px; margin:0 auto; padding:1.5rem; }
+  .panel {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); padding:1.2rem; margin-bottom:1rem;
+  }
+  .meta { display:flex; gap:1.5rem; flex-wrap:wrap; font-size:.85rem; color:var(--dim); margin-top:.5rem; }
+  .meta b { color:var(--text); }
+  .batch-title { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .btn {
+    background:var(--accent); color:#000; border:none; padding:.4rem .9rem;
+    border-radius:4px; cursor:pointer; font-weight:600; font-size:.85rem;
+  }
+  .btn.danger { background:var(--heat); color:#fff; }
+  .btn.secondary { background:var(--border); color:var(--text); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .chart-wrap { position:relative; height:480px; }
+  .chart-toolbar { display:flex; gap:.5rem; margin-bottom:.8rem; font-size:.8rem; color:var(--dim); align-items:center; }
+  .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:.8rem; }
+  .stat { background:var(--bg); padding:.7rem .9rem; border-radius:6px; border:1px solid var(--border); }
+  .stat .label { font-size:.7rem; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  .stat .val { font-size:1.3rem; font-weight:600; margin-top:.2rem; }
+  .notes { white-space:pre-wrap; color:var(--dim); font-size:.9rem; margin-top:.6rem; }
+  .live-dot { color:var(--green); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zymoscope</h1>
+  <a href="/">← Dashboard</a>
+</header>
+<main>
+  <div class="panel">
+    <div class="batch-title">
+      <div>
+        <h2>{{ batch.name }}{% if not batch.ended_at %} <span class="live-dot">●</span>{% endif %}</h2>
+        <div class="meta">
+          {% if batch.style %}<span><b>Style:</b> {{ batch.style }}</span>{% endif %}
+          {% if batch.og %}<span><b>OG:</b> {{ "%.3f"|format(batch.og) }}</span>{% endif %}
+          <span><b>Device:</b> {{ batch.device_id or "—" }}</span>
+          <span><b>Started:</b> {{ batch.started_at }}</span>
+          <span><b>Ended:</b> {{ batch.ended_at or "in progress" }}</span>
+        </div>
+        {% if batch.notes %}<div class="notes">{{ batch.notes }}</div>{% endif %}
+      </div>
+      <div>
+        {% if not batch.ended_at %}
+          <button class="btn danger" id="end-btn">End Batch</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="stat-grid" id="stats">
+      <div class="stat"><div class="label">Samples</div><div class="val" id="s-count">—</div></div>
+      <div class="stat"><div class="label">Min °C</div><div class="val" id="s-min">—</div></div>
+      <div class="stat"><div class="label">Max °C</div><div class="val" id="s-max">—</div></div>
+      <div class="stat"><div class="label">Mean °C</div><div class="val" id="s-mean">—</div></div>
+      <div class="stat"><div class="label">Duration</div><div class="val" id="s-dur">—</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="chart-toolbar">
+      <span>Scroll / pinch to zoom, drag to pan.</span>
+      <button class="btn secondary" id="reset-zoom">Reset zoom</button>
+    </div>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </div>
+</main>
+
+<script>
+(function() {
+  "use strict";
+  const batchId = {{ batch.id }};
+  const batchEnded = {{ 'true' if batch.ended_at else 'false' }};
+
+  function parseTemp(tc) {
+    if (tc == null) return null;
+    if (typeof tc === "string") {
+      try { const a = JSON.parse(tc); if (a.length) return Number(a[0]); } catch {}
+      return Number(tc) || null;
+    }
+    if (Array.isArray(tc)) return tc.length ? Number(tc[0]) : null;
+    return Number(tc);
+  }
+
+  const ctx = document.getElementById("chart").getContext("2d");
+  const chart = new Chart(ctx, {
+    type: "line",
+    data: { datasets: [
+      { label: "Temp °C", data: [], borderColor: "#f0a020", backgroundColor: "rgba(240,160,32,0.1)",
+        borderWidth: 1.5, pointRadius: 0, tension: 0.2, yAxisID: "y" },
+      { label: "Heater", data: [], borderColor: "#e05040", backgroundColor: "rgba(224,80,64,0.15)",
+        borderWidth: 1, pointRadius: 0, stepped: true, fill: true, yAxisID: "y1" },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      parsing: false,
+      scales: {
+        x: { type: "time", time: { tooltipFormat: "yyyy-MM-dd HH:mm:ss" },
+             ticks: { color: "#888898" }, grid: { color: "#2a2a3a" } },
+        y: { position: "left", ticks: { color: "#f0a020" }, grid: { color: "#2a2a3a" },
+             title: { display: true, text: "°C", color: "#888898" } },
+        y1: { position: "right", min: 0, max: 1, ticks: { stepSize: 1, color: "#e05040" },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: "heater", color: "#888898" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#e0e0e8" } },
+        zoom: {
+          pan:  { enabled: true, mode: "x" },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+        },
+      },
+    },
+  });
+
+  document.getElementById("reset-zoom").addEventListener("click", () => chart.resetZoom());
+
+  async function load() {
+    const res = await fetch(`/api/batches/${batchId}/telemetry`);
+    const rows = await res.json();
+
+    const cap = 3000;
+    const step = rows.length > cap ? Math.ceil(rows.length / cap) : 1;
+    const temps = [];
+    const heater = [];
+    let tMin = Infinity, tMax = -Infinity, tSum = 0, tN = 0;
+    let firstTs = null, lastTs = null;
+
+    for (let i = 0; i < rows.length; i++) {
+      if (i % step !== 0 && i !== rows.length - 1) continue;
+      const r = rows[i];
+      const ts = r.timestamp * 1000;
+      if (firstTs == null) firstTs = ts;
+      lastTs = ts;
+      const t = parseTemp(r.temp_c);
+      if (t != null && isFinite(t)) {
+        temps.push({ x: ts, y: t });
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+        tSum += t; tN++;
+      }
+      heater.push({ x: ts, y: r.relay1 ? 1 : 0 });
+    }
+
+    chart.data.datasets[0].data = temps;
+    chart.data.datasets[1].data = heater;
+    chart.update("none");
+
+    document.getElementById("s-count").textContent = rows.length;
+    document.getElementById("s-min").textContent = tN ? tMin.toFixed(2) : "—";
+    document.getElementById("s-max").textContent = tN ? tMax.toFixed(2) : "—";
+    document.getElementById("s-mean").textContent = tN ? (tSum / tN).toFixed(2) : "—";
+    if (firstTs && lastTs) {
+      const mins = (lastTs - firstTs) / 60000;
+      document.getElementById("s-dur").textContent =
+        mins < 120 ? `${mins.toFixed(0)} min` :
+        mins < 60*48 ? `${(mins/60).toFixed(1)} h` :
+        `${(mins/1440).toFixed(1)} d`;
+    }
+  }
+
+  load();
+  if (!batchEnded) setInterval(load, 15000);
+
+  const endBtn = document.getElementById("end-btn");
+  if (endBtn) {
+    endBtn.addEventListener("click", async () => {
+      if (!confirm("End this batch? This records the end time now.")) return;
+      endBtn.disabled = true;
+      await fetch(`/api/batches/${batchId}/end`, { method: "POST" });
+      location.reload();
+    });
+  }
+})();
+</script>
+</body>
+</html>
