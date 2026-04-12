@@ -42,6 +42,13 @@ def _broadcast(device_id: str, payload: dict[str, Any]) -> None:
     asyncio.run_coroutine_threadsafe(smart_plug.on_telemetry(device_id, payload), loop)
 
 
+async def _broadcast_state(device_id: str, state: dict[str, Any]) -> None:
+    """Push a shared-state update (e.g. setpoint change) to all WS clients."""
+    msg = json.dumps({"type": "state", "device_id": device_id, **state})
+    for ws in list(_ws_clients):
+        await _safe_send(ws, msg)
+
+
 async def _safe_send(ws: WebSocket, text: str) -> None:
     try:
         await ws.send_text(text)
@@ -119,7 +126,47 @@ async def api_command(device_id: str, request: Request):
         mqtt_sub.publish_command(device_id, data)
     except RuntimeError as exc:
         return {"error": str(exc)}
+    # Persist & sync setpoint across dashboard clients if present in the cmd.
+    if "setpoint" in data:
+        try:
+            sp = float(data["setpoint"])
+            await db.set_setpoint(device_id, sp)
+            await _broadcast_state(device_id, {"setpoint": sp})
+        except (TypeError, ValueError):
+            pass
     return {"status": "sent", "device_id": device_id}
+
+
+@app.get("/api/state")
+async def api_all_state():
+    """Return shared dashboard state (setpoints, etc.) for every device."""
+    return await db.get_all_device_state()
+
+
+@app.get("/api/state/{device_id}")
+async def api_state(device_id: str):
+    """Return shared dashboard state for a single device."""
+    state = await db.get_device_state(device_id)
+    return state or {"device_id": device_id, "setpoint": None}
+
+
+@app.post("/api/setpoint/{device_id}")
+async def api_set_setpoint(device_id: str, request: Request):
+    """Persist a setpoint and publish it via MQTT so every client stays in sync."""
+    data = await request.json()
+    try:
+        sp = float(data["setpoint"])
+    except (KeyError, TypeError, ValueError):
+        return {"error": "missing or invalid 'setpoint'"}
+    await db.set_setpoint(device_id, sp)
+    try:
+        mqtt_sub.publish_command(device_id, {"setpoint": sp})
+    except RuntimeError as exc:
+        # Even if MQTT is down, we persisted the UI value so other clients sync.
+        await _broadcast_state(device_id, {"setpoint": sp})
+        return {"status": "stored", "mqtt_error": str(exc), "setpoint": sp}
+    await _broadcast_state(device_id, {"setpoint": sp})
+    return {"status": "sent", "device_id": device_id, "setpoint": sp}
 
 
 @app.get("/api/plugs")
@@ -151,12 +198,13 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     _ws_clients.add(ws)
     try:
-        # Send current latest readings immediately.
-        if mqtt_sub.latest:
-            await ws.send_text(json.dumps({
-                "type": "snapshot",
-                "devices": mqtt_sub.latest,
-            }))
+        # Send current latest readings + shared state immediately.
+        state = await db.get_all_device_state()
+        await ws.send_text(json.dumps({
+            "type": "snapshot",
+            "devices": mqtt_sub.latest,
+            "state": state,
+        }))
         # Keep connection alive; client doesn't send much.
         while True:
             # Wait for pings / close frames.
