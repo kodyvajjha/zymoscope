@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -92,6 +93,9 @@ async def init_db() -> None:
 async def insert_telemetry(data: dict[str, Any]) -> None:
     """Insert a telemetry row and upsert the device record."""
     device_id = data.get("device_id", "unknown")
+    temp_c = data.get("temp_c")
+    if isinstance(temp_c, (list, dict)):
+        temp_c = json.dumps(temp_c)
     async with _get_conn() as db:
         await db.execute(
             """
@@ -110,9 +114,9 @@ async def insert_telemetry(data: dict[str, Any]) -> None:
             (
                 device_id,
                 data.get("timestamp", time.time()),
-                data.get("temp_c"),  # stored as JSON array string
+                temp_c,
                 data.get("humidity"),
-                data.get("pressure"),
+                data.get("pressure_hpa", data.get("pressure")),
                 data.get("weight_g"),
                 data.get("gravity_est"),
                 data.get("relay1"),
