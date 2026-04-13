@@ -4,7 +4,11 @@ An ESP32-based fermentation monitoring and control system with a real-time web d
 
 ## Overview
 
-![Zymoscope prototype](PXL_20260406_013343601.jpg)
+<p align="center">
+  <img src="images/PXL_20260406_013343601.jpg" alt="Zymoscope prototype" width="480">
+  <br>
+  <img src="images/Lacto%20Cucumber%20Pickles%20%E2%80%94%20Zymoscope.png" alt="Dashboard screenshot — lacto cucumber pickles batch" width="720">
+</p>
 
 Zymoscope monitors and controls fermentation environments using:
 
