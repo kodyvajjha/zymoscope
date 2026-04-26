@@ -205,13 +205,29 @@ async def api_set_setpoint(device_id: str, request: Request):
 
 @app.get("/api/plugs")
 async def api_plugs():
-    """Return current smart plug status and energy readings."""
+    """Return current smart plug status and energy readings.
+
+    Always emits one entry per configured slot, with an `error` field when
+    the plug is unreachable, so the UI can distinguish "nothing configured"
+    from "configured but offline".
+    """
     plugs = []
-    for host in [settings.KASA_HEATER_HOST, settings.KASA_COOLER_HOST]:
-        if host:
-            status = await smart_plug.get_status(host)
-            if status:
-                plugs.append(status)
+    slots = [
+        (settings.KASA_HEATER_HOST, settings.KASA_HEATER_ALIAS),
+        (settings.KASA_COOLER_HOST, settings.KASA_COOLER_ALIAS),
+    ]
+    for host, alias in slots:
+        if not host:
+            continue
+        status = await smart_plug.get_status(host)
+        if status:
+            plugs.append(status)
+        else:
+            plugs.append({
+                "host": host,
+                "alias": alias,
+                "error": "unreachable",
+            })
     return plugs
 
 

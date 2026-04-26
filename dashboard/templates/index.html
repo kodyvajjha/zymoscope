@@ -142,6 +142,12 @@
   }
   .plug-toggle.on { background: var(--green); color: #000; }
   .plug-toggle.off { background: var(--heat); color: #fff; }
+  .plug-card.unreachable { border-color: var(--heat); }
+  .plug-card.unreachable h4 { color: var(--heat); }
+  .plug-card .plug-hint {
+    font-size: .7rem; color: var(--dim); margin-top: .3rem;
+  }
+  .plug-card .plug-status-bad { color: var(--heat); font-weight: 600; }
 
   .no-devices {
     text-align: center; color: var(--dim); padding: 3rem 1rem;
@@ -606,6 +612,12 @@
   // -- Smart Plugs --
   const plugSection = document.getElementById("plug-section");
 
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
   async function loadPlugs() {
     try {
       const res = await fetch("/api/plugs");
@@ -615,18 +627,41 @@
       for (const p of plugs) {
         const div = document.createElement("div");
         div.className = "plug-card";
+        const title = escapeHtml(p.alias || p.host);
+
+        if (p.error) {
+          div.classList.add("unreachable");
+          div.innerHTML = `
+            <h4>${title}</h4>
+            <div class="plug-row">
+              <span class="lbl">Status</span>
+              <span class="plug-status-bad">unreachable</span>
+            </div>
+            <div class="plug-hint">
+              Configured at <code>${escapeHtml(p.host)}</code>.
+              ${p.alias ? "Will retry alias-based discovery on next poll." : "Set KASA_*_ALIAS to enable auto-rediscovery."}
+            </div>
+          `;
+          plugSection.appendChild(div);
+          continue;
+        }
+
         const powerHtml = p.power_w != null
           ? `<div class="plug-row"><span class="lbl">Power</span><span class="val">${Number(p.power_w).toFixed(1)} W</span></div>
              <div class="plug-row"><span class="lbl">Voltage</span><span class="val">${Number(p.voltage_v).toFixed(1)} V</span></div>
              <div class="plug-row"><span class="lbl">Current</span><span class="val">${Number(p.current_a).toFixed(3)} A</span></div>`
           : "";
+        const driftHtml = (p.live_host && p.live_host !== p.host)
+          ? `<div class="plug-hint">Rebound by alias to <code>${escapeHtml(p.live_host)}</code> (configured: <code>${escapeHtml(p.host)}</code>). Update env to pin.</div>`
+          : "";
         div.innerHTML = `
-          <h4>${p.alias || p.host}</h4>
+          <h4>${title}</h4>
           <div class="plug-row">
             <span class="lbl">Status</span>
-            <button class="plug-toggle ${p.is_on ? "on" : "off"}" data-host="${p.host}">${p.is_on ? "ON" : "OFF"}</button>
+            <button class="plug-toggle ${p.is_on ? "on" : "off"}" data-host="${escapeHtml(p.host)}">${p.is_on ? "ON" : "OFF"}</button>
           </div>
           ${powerHtml}
+          ${driftHtml}
         `;
         div.querySelector(".plug-toggle").addEventListener("click", async (e) => {
           const host = e.target.dataset.host;
