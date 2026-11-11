@@ -293,3 +293,118 @@ async def set_setpoint(device_id: str, setpoint: float) -> None:
             (device_id, setpoint),
         )
         await db.commit()
+
+
+# ---- chart series / export ---------------------------------------------------
+
+# First DS18B20 reading as a number. temp_c is stored as a JSON array
+# ("[21.5]", "[]" when the probe failed) or, in very old rows, a bare number.
+_TEMP_SQL = """
+    CASE
+        WHEN json_valid(temp_c) AND json_type(temp_c) = 'array'
+            THEN json_extract(temp_c, '$[0]')
+        ELSE CAST(temp_c AS REAL)
+    END
+"""
+
+
+async def get_series(
+    device_id: str, hours: float = 24, max_points: int = 1500
+) -> dict[str, Any]:
+    """Return a time-bucketed series for charting.
+
+    Aggregates in SQL so the browser receives at most ~max_points rows no
+    matter how long the range is (a raw "All" fetch can be hundreds of
+    thousands of rows). Each point is
+    [t, temp_avg, temp_min, temp_max, heat_duty, humidity, pressure, n]
+    where heat_duty is the fraction of samples with the heater relay on.
+    Implausible probe readings (glitches from before the firmware's CRC /
+    power-on checks) are dropped from the chart; the CSV export stays raw.
+    """
+    max_points = max(50, min(int(max_points), 5000))
+    since = time.time() - hours * 3600 if hours and hours > 0 else 0.0
+    args: dict[str, Any] = {"d": device_id, "since": since}
+    where = "device_id = :d AND timestamp >= :since"
+
+    async with _get_conn() as db:
+        cur = await db.execute(
+            f"SELECT MIN(timestamp), MAX(timestamp), COUNT(*) FROM telemetry WHERE {where}",
+            args,
+        )
+        t0, t1, count = await cur.fetchone()
+        if not count:
+            return {"bucket_s": 0, "count": 0, "points": []}
+
+        # Never bucket finer than the 30 s publish interval.
+        span = max(1.0, t1 - t0)
+        bucket = max(30, int(span / max_points) + 1)
+
+        cur = await db.execute(
+            f"""
+            SELECT CAST(timestamp / :b AS INTEGER) * :b AS t,
+                   AVG(temp), MIN(temp), MAX(temp),
+                   AVG(COALESCE(relay1, 0)),
+                   AVG(humidity), AVG(pressure),
+                   COUNT(*)
+            FROM (
+                SELECT timestamp, relay1, humidity, pressure,
+                       CASE WHEN t BETWEEN -10 AND 100 AND t <> 85.0 THEN t END AS temp
+                FROM (
+                    SELECT timestamp, relay1, humidity, pressure, {_TEMP_SQL} AS t
+                    FROM telemetry WHERE {where}
+                )
+            )
+            GROUP BY 1
+            ORDER BY 1
+            """,
+            {**args, "b": bucket},
+        )
+        rows = await cur.fetchall()
+
+    def r(v: Any, nd: int) -> Any:
+        return None if v is None else round(v, nd)
+
+    points = [
+        [int(t) + bucket // 2 if bucket > 30 else int(t),
+         r(ta, 2), r(tmin, 2), r(tmax, 2), r(duty, 3), r(hum, 1), r(pres, 1), n]
+        for (t, ta, tmin, tmax, duty, hum, pres, n) in rows
+    ]
+    return {"bucket_s": bucket, "count": count, "points": points}
+
+
+async def iter_telemetry_csv(device_id: str, hours: float = 0):
+    """Yield CSV text (header first) of raw telemetry rows, oldest first."""
+    from datetime import datetime, timezone
+
+    yield "time_utc,unix,temp_c,humidity,pressure_hpa,relay1_heat,relay2_cool\n"
+    async with _get_conn() as db:
+        since = time.time() - hours * 3600 if hours and hours > 0 else 0.0
+        cur = await db.execute(
+            f"""
+            SELECT timestamp, {_TEMP_SQL} AS temp, humidity, pressure, relay1, relay2
+            FROM telemetry WHERE device_id = ? AND timestamp >= ?
+            ORDER BY timestamp ASC
+            """,
+            (device_id, since),
+        )
+        while True:
+            rows = await cur.fetchmany(2000)
+            if not rows:
+                break
+            out = []
+            for ts, temp, hum, pres, r1, r2 in rows:
+                iso = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")
+                cells = [iso, f"{ts:.0f}", temp, hum, pres, r1, r2]
+                out.append(",".join("" if c is None else str(c) for c in cells))
+            yield "\n".join(out) + "\n"
+
+
+async def set_device_name(device_id: str, name: str) -> bool:
+    """Give a device a friendly display name. Returns False if unknown."""
+    async with _get_conn() as db:
+        cur = await db.execute(
+            "UPDATE devices SET name = ? WHERE device_id = ?", (name, device_id)
+        )
+        await db.commit()
+        return cur.rowcount > 0

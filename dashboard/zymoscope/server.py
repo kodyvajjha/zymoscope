@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
@@ -117,9 +117,43 @@ async def api_devices():
     return await db.get_devices()
 
 
+@app.post("/api/devices/{device_id}")
+async def api_rename_device(device_id: str, request: Request):
+    """Set a device's friendly display name: {"name": "Koji chamber"}."""
+    data = await request.json()
+    name = str(data.get("name", "")).strip()[:40] or device_id
+    if not await db.set_device_name(device_id, name):
+        return Response('{"error":"unknown device"}', status_code=404,
+                        media_type="application/json")
+    return {"status": "ok", "device_id": device_id, "name": name}
+
+
 @app.get("/api/telemetry/{device_id}")
 async def api_telemetry(device_id: str, hours: float = Query(24)):
+    """Raw rows (can be very large for long ranges — prefer /api/series)."""
     return await db.get_recent_telemetry(device_id, hours)
+
+
+@app.get("/api/series/{device_id}")
+async def api_series(device_id: str, hours: float = Query(24),
+                     points: int = Query(1500)):
+    """Time-bucketed chart series; size is bounded regardless of range."""
+    series = await db.get_series(device_id, hours, points)
+    # Serialize directly: FastAPI's jsonable_encoder is slow on a Pi.
+    return Response(json.dumps(series, separators=(",", ":")),
+                    media_type="application/json")
+
+
+@app.get("/api/export/{device_id}.csv")
+async def api_export_csv(device_id: str, hours: float = Query(0)):
+    """Download raw telemetry as CSV (hours <= 0 = everything)."""
+    label = "all" if hours <= 0 else f"{hours:g}h"
+    fname = f"zymoscope-{device_id}-{label}-{time.strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        db.iter_telemetry_csv(device_id, hours),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @app.get("/api/telemetry/{device_id}/latest")

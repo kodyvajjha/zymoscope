@@ -65,6 +65,8 @@ python -m zymoscope.server
 - Default MQTT broker URI: `mqtt://192.168.1.100:1883` (in `firmware/main/app_main.c`)
 - PID setpoint persisted in NVS (`zymoscope` namespace, `setpoint` key)
 - Dashboard runs on port 8000 by default
+- Charts use `/api/series/<id>?hours=` (SQL time-bucketed, ≤~1500 pts; implausible temps dropped) — don't fetch raw `/api/telemetry` for long ranges (full history was 21 MB / 150 s on the Pi)
+- `/api/export/<id>.csv?hours=` streams raw telemetry; `POST /api/devices/<id>` `{"name"}` renames; `index.html?range=<hours>` sets the default chart range
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
 - `PLUG_WATCHDOG_SEC` (default 180): dashboard switches plugs off if no telemetry arrives for this long; 0 disables
