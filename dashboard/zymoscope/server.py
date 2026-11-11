@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,6 +31,14 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Connected WebSocket clients.
 _ws_clients: set[WebSocket] = set()
 
+# Target range the firmware accepts (SETPOINT_MIN_C/MAX_C in mqtt_client.c).
+SP_MIN, SP_MAX = 0.0, 60.0
+# After a target change from the dashboard, ignore the device's reported
+# target this long before trusting it over ours (telemetry already in
+# flight still carries the old value).
+SP_CMD_GRACE_S = 90
+_last_sp_cmd: dict[str, float] = {}
+
 
 def _broadcast(device_id: str, payload: dict[str, Any]) -> None:
     """Called from the MQTT thread to fan-out to WebSocket clients and smart plugs."""
@@ -41,6 +50,87 @@ def _broadcast(device_id: str, payload: dict[str, Any]) -> None:
         asyncio.run_coroutine_threadsafe(_safe_send(ws, msg), loop)
     # Forward relay state changes to Kasa smart plugs.
     asyncio.run_coroutine_threadsafe(smart_plug.on_telemetry(device_id, payload), loop)
+    if payload.get("setpoint") is not None:
+        asyncio.run_coroutine_threadsafe(
+            _on_reported_setpoint(device_id, payload["setpoint"],
+                                  payload.get("timestamp")), loop)
+
+
+def _device_reports_setpoint(device_id: str) -> bool:
+    """Newer firmware includes its active target in telemetry."""
+    return mqtt_sub.latest.get(device_id, {}).get("setpoint") is not None
+
+
+async def _on_reported_setpoint(device_id: str, value: Any,
+                                ts: float | None = None) -> None:
+    """Log the target the device is actually running (batch history), and
+    correct the shared UI value if it differs (e.g. a command it missed
+    while offline)."""
+    try:
+        sp = float(value)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(sp):
+        return
+    try:
+        # Stamp with the telemetry row's time (just before it, so that row
+        # already counts toward the new target).
+        await db.log_setpoint(device_id, sp, ts - 0.001 if ts else None)
+        if time.time() - _last_sp_cmd.get(device_id, 0) < SP_CMD_GRACE_S:
+            return
+        state = await db.get_device_state(device_id)
+        if not state or state.get("setpoint") is None or abs(state["setpoint"] - sp) >= 0.05:
+            await db.set_setpoint(device_id, sp, log=False)
+            await _broadcast_state(device_id, {"setpoint": sp})
+    except Exception:
+        log.exception("Recording reported setpoint failed")
+
+
+def _on_status(device_id: str, payload: dict[str, Any]) -> None:
+    """MQTT thread: device status events. When a device (re)connects,
+    send it the batch to show on its screen."""
+    loop = mqtt_sub._loop
+    if loop is not None and payload.get("event") == "online":
+        asyncio.run_coroutine_threadsafe(_push_batch_to_device(device_id), loop)
+
+
+def _oled_name(name: str) -> str:
+    """Batch name the OLED can show: printable ASCII, no quotes or
+    backslashes (the firmware's JSON parser has no escapes), 23 chars."""
+    clean = "".join(c for c in name.strip() if " " <= c <= "~" and c not in '"\\')
+    return " ".join(clean.split())[:23].strip()
+
+
+async def _push_batch_to_device(device_id: str | None) -> None:
+    if not device_id:
+        return
+    try:
+        b = await db.get_active_batch(device_id)
+        if b:
+            payload = {"batch_name": _oled_name(b["name"]) or f"Batch {b['id']}",
+                       "batch_elapsed": max(0, int(time.time() - (b["started_ts"] or time.time())))}
+        else:
+            payload = {"batch_name": ""}
+        mqtt_sub.publish_command(device_id, payload)
+    except RuntimeError:
+        pass   # broker down; the device gets it on its next "online"
+    except Exception:
+        log.exception("Sending batch info to %s failed", device_id)
+
+
+def _parse_setpoint(value: Any) -> float | None:
+    try:
+        sp = float(value)
+    except (TypeError, ValueError):
+        return None
+    return sp if math.isfinite(sp) and SP_MIN <= sp <= SP_MAX else None
+
+
+async def _store_setpoint_from_ui(device_id: str, sp: float) -> None:
+    """Shared UI value. The history (setpoint_log) is written from the
+    device's telemetry when it reports its target, else here."""
+    _last_sp_cmd[device_id] = time.time()
+    await db.set_setpoint(device_id, sp, log=not _device_reports_setpoint(device_id))
 
 
 async def _broadcast_state(device_id: str, state: dict[str, Any]) -> None:
@@ -65,6 +155,7 @@ async def lifespan(app: FastAPI):
     await db.init_db()
     mqtt_sub.set_event_loop(asyncio.get_running_loop())
     mqtt_sub.register_callback(_broadcast)
+    mqtt_sub.register_status_callback(_on_status)
     mqtt_sub.start(daemon=True)
     # Start smart plug energy polling + stale-telemetry watchdog (every 30s)
     # if plugs are configured.
@@ -95,6 +186,7 @@ async def lifespan(app: FastAPI):
     if energy_task:
         energy_task.cancel()
     mqtt_sub.unregister_callback(_broadcast)
+    mqtt_sub.unregister_status_callback(_on_status)
 
 
 app = FastAPI(title="Zymoscope", lifespan=lifespan)
@@ -174,6 +266,7 @@ async def api_create_batch(request: Request):
     if not data.get("device_id"):
         return {"error": "device_id is required"}
     batch_id = await db.create_batch(data)
+    await _push_batch_to_device(data.get("device_id"))
     return {"id": batch_id, "status": "created"}
 
 
@@ -191,6 +284,8 @@ async def api_batch_telemetry(batch_id: int):
 @app.post("/api/batches/{batch_id}/end")
 async def api_end_batch(batch_id: int):
     await db.end_batch(batch_id)
+    batch = await db.get_batch(batch_id)
+    await _push_batch_to_device(batch["device_id"] if batch else None)
     result = None
     try:
         result = await _batch_stats(batch_id, save=True)
@@ -260,19 +355,31 @@ async def batch_page(request: Request, batch_id: int):
 @app.post("/api/cmd/{device_id}")
 async def api_command(device_id: str, request: Request):
     data = await request.json()
+    if not isinstance(data, dict):
+        return Response('{"error":"expected a JSON object"}', status_code=400,
+                        media_type="application/json")
+    sp = None
+    if "setpoint" in data:
+        sp = _parse_setpoint(data["setpoint"])
+        if sp is None:
+            return Response(f'{{"error":"setpoint must be {SP_MIN:g}-{SP_MAX:g} °C"}}',
+                            status_code=400, media_type="application/json")
     try:
         mqtt_sub.publish_command(device_id, data)
     except RuntimeError as exc:
         return {"error": str(exc)}
     # Persist & sync setpoint across dashboard clients if present in the cmd.
-    if "setpoint" in data:
-        try:
-            sp = float(data["setpoint"])
-            await db.set_setpoint(device_id, sp)
-            await _broadcast_state(device_id, {"setpoint": sp})
-        except (TypeError, ValueError):
-            pass
+    if sp is not None:
+        await _store_setpoint_from_ui(device_id, sp)
+        await _broadcast_state(device_id, {"setpoint": sp})
     return {"status": "sent", "device_id": device_id}
+
+
+@app.get("/api/setpoints/{device_id}")
+async def api_setpoint_history(device_id: str, hours: float = Query(0)):
+    """Target changes [[unix_ts, setpoint], ...] for the chart's target line
+    (the first entry is the target in force at the start of the range)."""
+    return await db.get_setpoint_history(device_id, hours)
 
 
 @app.get("/api/state")
@@ -292,11 +399,11 @@ async def api_state(device_id: str):
 async def api_set_setpoint(device_id: str, request: Request):
     """Persist a setpoint and publish it via MQTT so every client stays in sync."""
     data = await request.json()
-    try:
-        sp = float(data["setpoint"])
-    except (KeyError, TypeError, ValueError):
-        return {"error": "missing or invalid 'setpoint'"}
-    await db.set_setpoint(device_id, sp)
+    sp = _parse_setpoint(data.get("setpoint")) if isinstance(data, dict) else None
+    if sp is None:
+        return Response(f'{{"error":"setpoint must be {SP_MIN:g}-{SP_MAX:g} °C"}}',
+                        status_code=400, media_type="application/json")
+    await _store_setpoint_from_ui(device_id, sp)
     try:
         mqtt_sub.publish_command(device_id, {"setpoint": sp})
     except RuntimeError as exc:

@@ -75,6 +75,10 @@
   .pill.holding { background: rgba(64,192,96,.15); color: var(--green); }
   .pill.fault, .pill.offline { background: rgba(224,80,64,.18); color: var(--heat); }
   .small-dim { font-size: .7rem; color: var(--dim); }
+  .oled-ctl { display: flex; gap: 2px; align-items: center; }
+  .oled-ctl .icon-btn { font-size: .7rem; }
+  .oled-ctl .pet { filter: grayscale(1); opacity: .45; }
+  .oled-ctl .pet:hover { filter: none; opacity: 1; }
 
   .banner {
     display: none; font-size: .8rem; padding: .5rem .7rem; border-radius: 6px;
@@ -396,9 +400,18 @@
   // Rebuild all datasets from entry.points ([t, avg, min, max, duty, ...]).
   // A null point is inserted wherever the device was off for a while, so
   // the lines break instead of drawing straight across the gap.
+  // Target in force at unix time ts, from the logged target changes
+  // (falls back to the current target when nothing is logged).
+  function targetAt(entry, ts) {
+    const h = entry.spHist;
+    if (!h.length) return entry.setpoint;
+    let v = null;
+    for (const [t, sp] of h) { if (t <= ts) v = sp; else break; }
+    return v;
+  }
+
   function renderChart(entry) {
     const ds = entry.chart.data.datasets;
-    const sp = entry.setpoint;
     const gap = Math.max(600, 3 * entry.bucket);
     const pts = [];
     for (let i = 0; i < entry.points.length; i++) {
@@ -410,7 +423,7 @@
     ds[0].data = col(2);
     ds[1].data = col(3);
     ds[2].data = col(1);
-    ds[3].data = sp == null ? [] : pts.map(p => ({ x: p[0] * 1000, y: p[1] == null ? null : sp }));
+    ds[3].data = pts.map(p => ({ x: p[0] * 1000, y: p[1] == null ? null : targetAt(entry, p[0]) }));
     ds[4].data = col(4);
     // The band only means something once samples are aggregated.
     ds[1].hidden = ds[0].hidden = entry.bucket <= 60;
@@ -436,13 +449,16 @@
       `Min <b>${fmt(lo)}°</b>`, `Avg <b>${fmt(sum / n)}°</b>`, `Max <b>${fmt(hi)}°</b>`,
       `Heater on <b>${dutyN ? Math.round(dutySum / dutyN * 100) : 0}%</b> of the time`,
     ];
-    // Only meaningful over short ranges: the target history isn't stored.
-    if (entry.setpoint != null && n && entry.rangeHours > 0 && entry.rangeHours <= 24) {
-      // How much of the range was within ±1 °C of the current target.
-      let inBand = 0, tot = 0;
-      for (const p of pts) { const w = p[7] || 1; tot += w; if (Math.abs(p[1] - entry.setpoint) <= 1) inBand += w; }
-      parts.push(`Within ±1° of target <b>${Math.round(inBand / tot * 100)}%</b>`);
+    // How much of the range was within ±1 °C of the target at the time
+    // (target changes are logged since Nov 2026; older points are skipped).
+    let inBand = 0, tot = 0;
+    for (const p of pts) {
+      const sp = targetAt(entry, p[0]);
+      if (sp == null) continue;
+      const w = p[7] || 1; tot += w;
+      if (Math.abs(p[1] - sp) <= 1) inBand += w;
     }
+    if (tot) parts.push(`Within ±1° of target <b>${Math.round(inBand / tot * 100)}%</b>`);
     el.innerHTML = parts.map(x => `<span>${x}</span>`).join("");
   }
 
@@ -452,8 +468,12 @@
     const req = ++entry.req;   // ignore responses for ranges no longer selected
     entry.q("chart-msg").textContent = "Loading…";
     try {
-      const s = await api(`/api/series/${encodeURIComponent(id)}?hours=${entry.rangeHours}`);
+      const [s, hist] = await Promise.all([
+        api(`/api/series/${encodeURIComponent(id)}?hours=${entry.rangeHours}`),
+        api(`/api/setpoints/${encodeURIComponent(id)}?hours=${entry.rangeHours}`).catch(() => null),
+      ]);
       if (req !== entry.req) return;
+      if (Array.isArray(hist)) entry.spHist = hist;
       entry.points = s.points;
       entry.bucket = s.bucket_s;
       renderChart(entry);
@@ -484,6 +504,10 @@
           <span class="pill" data-f="pill">—</span>
           <span class="small-dim" data-f="last-seen"></span>
           <span class="small-dim" data-f="fw"></span>
+          <span class="oled-ctl">
+            <button class="icon-btn" data-f="oled-next" title="Show the next page on the device's screen (main · chart · info)">Screen ›</button>
+            <button class="icon-btn pet" data-f="oled-pet" title="Say hi" aria-label="Say hi">🐾</button>
+          </span>
         </div>
       </div>
       <div class="banner" data-f="banner"></div>
@@ -526,6 +550,7 @@
     const entry = {
       id, el: card, name: id, points: [], bucket: 30, req: 0,
       rangeHours: DEFAULT_RANGE, setpoint: null, spDirty: false, last: null, lastSeen: null,
+      spHist: [],   // [[unix_ts, target], ...] for the chart's target line
       q: (f) => card.querySelector(`[data-f="${f}"]`),
     };
     entry.chart = makeChart(card.querySelector("canvas"), entry);
@@ -547,6 +572,14 @@
       ev.target.classList.toggle("active", on);
       entry.chart.resize();
     });
+
+    // Device screen (OLED)
+    const oled = async (what, msg) => {
+      try { await postJson(`/api/cmd/${encodeURIComponent(id)}`, { display: what }); if (msg) toast(msg); }
+      catch (e) { toast("Couldn't reach the device: " + e.message, true); }
+    };
+    entry.q("oled-next").addEventListener("click", () => oled("next"));
+    entry.q("oled-pet").addEventListener("click", () => oled("pet", "Look at the screen 👀"));
 
     // Rename
     entry.q("rename").addEventListener("click", () => startRename(entry));
@@ -637,6 +670,11 @@
   }
   function applySetpoint(entry, sp) {
     entry.setpoint = sp == null ? null : Number(sp);
+    // Live target change: extend the chart's target history.
+    const h = entry.spHist, lastSp = h.length ? h[h.length - 1][1] : null;
+    if (entry.setpoint != null && h.length && Math.abs(lastSp - entry.setpoint) >= 0.05) {
+      h.push([Date.now() / 1000, entry.setpoint]);
+    }
     if (!entry.spDirty) entry.q("sp").value = entry.setpoint == null ? "" : entry.setpoint.toFixed(1);
     markSpDirty(entry);
     renderChart(entry);

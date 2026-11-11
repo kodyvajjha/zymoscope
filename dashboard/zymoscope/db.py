@@ -310,8 +310,13 @@ async def get_all_device_state() -> dict[str, dict[str, Any]]:
         return {r["device_id"]: dict(r) for r in rows}
 
 
-async def set_setpoint(device_id: str, setpoint: float) -> None:
-    """Upsert the target temperature for a device, shared across clients."""
+async def set_setpoint(device_id: str, setpoint: float, log: bool = True) -> None:
+    """Upsert the target temperature for a device, shared across clients.
+
+    log=False leaves setpoint_log alone: devices whose telemetry reports
+    the setpoint they actually run are logged from telemetry instead
+    (see log_setpoint), so the history records what the device did, when
+    it did it."""
     async with _get_conn() as db:
         await db.execute(
             """
@@ -323,17 +328,70 @@ async def set_setpoint(device_id: str, setpoint: float) -> None:
             """,
             (device_id, setpoint),
         )
+        await db.commit()
+    if log:
+        await log_setpoint(device_id, setpoint)
+
+
+async def log_setpoint(device_id: str, setpoint: float, ts: float | None = None) -> bool:
+    """Append to setpoint_log if the target differs from the last entry.
+    Returns True if a row was added."""
+    setpoint = round(float(setpoint), 2)
+    async with _get_conn() as db:
         cur = await db.execute(
             "SELECT setpoint FROM setpoint_log WHERE device_id = ? ORDER BY ts DESC LIMIT 1",
             (device_id,),
         )
         last = await cur.fetchone()
-        if last is None or last[0] != setpoint:
-            await db.execute(
-                "INSERT INTO setpoint_log (device_id, ts, setpoint) VALUES (?, ?, ?)",
-                (device_id, time.time(), setpoint),
-            )
+        if last is not None and abs(last[0] - setpoint) < 0.005:
+            return False
+        await db.execute(
+            "INSERT INTO setpoint_log (device_id, ts, setpoint) VALUES (?, ?, ?)",
+            (device_id, ts if ts is not None else time.time(), setpoint),
+        )
         await db.commit()
+        return True
+
+
+async def get_setpoint_history(device_id: str, hours: float = 0) -> list[list[float]]:
+    """Target changes as [ts, setpoint] pairs, oldest first. With hours > 0,
+    only changes in the last `hours`, plus the one in force at its start."""
+    async with _get_conn() as db:
+        if hours and hours > 0:
+            t0 = time.time() - hours * 3600
+            cur = await db.execute(
+                """
+                SELECT ts, setpoint FROM setpoint_log
+                WHERE device_id = :d
+                  AND ts >= COALESCE((SELECT MAX(ts) FROM setpoint_log
+                                      WHERE device_id = :d AND ts <= :t0), :t0)
+                ORDER BY ts
+                """,
+                {"d": device_id, "t0": t0},
+            )
+        else:
+            cur = await db.execute(
+                "SELECT ts, setpoint FROM setpoint_log WHERE device_id = ? ORDER BY ts",
+                (device_id,),
+            )
+        return [[r[0], r[1]] for r in await cur.fetchall()]
+
+
+async def get_active_batch(device_id: str) -> dict[str, Any] | None:
+    """The running batch on a device (newest if several), with its age."""
+    async with _get_conn() as db:
+        cur = await db.execute(
+            """
+            SELECT id, name,
+                   CAST(strftime('%s', started_at) AS REAL) AS started_ts
+            FROM batches
+            WHERE device_id = ? AND ended_at IS NULL
+            ORDER BY started_at DESC LIMIT 1
+            """,
+            (device_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 # ---- chart series / export ---------------------------------------------------

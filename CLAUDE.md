@@ -25,12 +25,14 @@ runs the web app and adds a camera pipeline. The ESP32 node stays dumb.
 
 - `firmware/` — ESP-IDF v5.x C firmware
   - `main/sensor/` — ds18b20 (1-Wire), hx711 (load cell ADC), bme280 (I2C)
-  - `main/display/` — SSD1306 OLED driver with 8x8 font
+  - `main/display/` — SSD1306 OLED: `oled.c` (I2C only), `gfx.c` (drawing, fonts),
+    `ui.c` (page layouts, pure C), `display.c` (display task, 4 h history, pages)
+  - `tools/oled_preview.py` — renders the OLED pages to PNGs on the PC (gcc only)
   - `main/control/` — PID temperature controller + time-proportioned output
   - `main/comms/` — Wi-Fi STA + MQTT client + OTA (`ota.c`)
   - `partitions.csv` — 4 MB, two OTA slots (nvs kept at 0x9000/0x6000)
   - `tools/ota_push.py` — push a build over the air (see `docs/ota.md`)
-  - `main/app_main.c` — wires everything, runs 3 FreeRTOS tasks
+  - `main/app_main.c` — wires everything, runs sensor/control/telemetry tasks (+ display task)
 - `dashboard/` — Python web app
   - `zymoscope/` — FastAPI server, MQTT subscriber, SQLite DB, config, smart plug control
   - `zymoscope/smart_plug.py` — TP-Link Kasa plug control via python-kasa (KP115 energy monitoring)
@@ -58,15 +60,19 @@ python -m zymoscope.server
 ## Key conventions
 
 - MQTT topics: `zymoscope/<mac>/telemetry`, `zymoscope/<mac>/cmd`, `zymoscope/<mac>/status`
-- `status` topic: retained `online` (fw, partition, ota_state) / `offline` LWT, plus `ota` progress events
-- MQTT cmds: `{"setpoint": <float>}`, `{"ota_url": "<http url>"}` (never publish cmds retained)
+- `status` topic: retained `online` (fw, partition, ota_state) / `offline` LWT, plus `ota` progress events. The dashboard subscribes to it but routes it apart from telemetry (never stored / never feeds the plug watchdog); on `online` it re-sends the batch info
+- MQTT cmds: `{"setpoint": <float>}`, `{"ota_url": "<http url>"}`, `{"display": "next"|"main"|"chart"|"info"|"pet"}`, `{"batch_name": "<ascii, no quotes>", "batch_elapsed": <s>}` (`""` clears) (never publish cmds retained)
+- Telemetry includes `setpoint` (the target the controller runs); the firmware publishes immediately on a target change. For devices that report it, `setpoint_log` is written from telemetry only (not from the command path) so batch history records what the device actually did
+- Setpoint range 0–60 °C is enforced in firmware (`SETPOINT_MAX_C`), dashboard JS (`SP_MAX`) and server (`SP_MAX`) — change all three together
+- OLED: display task redraws every 1 s (150 ms for the easter eggs) and takes the `onewire_quiet` mutex around each I2C frame so it never overlaps a DS18B20 read; picture shifts ≤1 px every 5 min against burn-in. Preview layouts with `python firmware/tools/oled_preview.py`
 - ESP-IDF lives at `~/esp/esp-idf` — `. ~/esp/esp-idf/export.sh` before `idf.py`
 - ESP32 log tag: `"zymoscope"`
 - Default MQTT broker URI: `mqtt://192.168.1.100:1883` (in `firmware/main/app_main.c`)
 - PID setpoint persisted in NVS (`zymoscope` namespace, `setpoint` key)
 - Dashboard runs on port 8000 by default
 - Charts use `/api/series/<id>?hours=` (SQL time-bucketed, ≤~1500 pts; implausible temps dropped) — don't fetch raw `/api/telemetry` for long ranges (full history was 21 MB / 150 s on the Pi)
-- `/api/export/<id>.csv?hours=` streams raw telemetry; `POST /api/devices/<id>` `{"name"}` renames; `index.html?range=<hours>` sets the default chart range
+- `/api/setpoints/<id>?hours=` target-change history (chart target line);
+  `/api/export/<id>.csv?hours=` streams raw telemetry; `POST /api/devices/<id>` `{"name"}` renames; `index.html?range=<hours>` sets the default chart range
 - Batch control stats (`zymoscope/stats.py`): avg offset, 90% spread, % within ±0.5 °C, overshoot, heater cycles/h over the hold phase (warm-up + 60 min settle excluded). `GET /api/batches/<id>/stats`; saved to `batches.stats` on end; target comes from `setpoint_log` (logged since 2026-11-10) or a manual `batches.target` (`POST /api/batches/<id>/target`)
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)

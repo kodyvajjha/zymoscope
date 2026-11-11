@@ -260,10 +260,19 @@
     const set = (id, txt) => { $(id).textContent = txt; };
     $("ctl-sofar").textContent = st.in_progress ? "(so far)" : "";
     const pieces = st.pieces || [];
-    const tgts = [...new Set(pieces.map(p => p.target))];
+    // Target timeline: "40.0 °C → 35.0 °C at 10:32 pm (+4h 02m)"
+    const steps = [];
+    for (const p of pieces) {
+      if (steps.length && steps[steps.length - 1].target === p.target) continue;
+      steps.push(p);
+    }
+    const rel = s => { const m = Math.round(s / 60); return m < 60 ? `+${m}m` : `+${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`; };
+    const clock = s => new Date(s * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const timeline = steps.map((p, i) => `${Number(p.target).toFixed(1)} °C` +
+      (i ? ` at ${clock(p.from)} <span>(${rel(p.from - st.t_start)})</span>` : "")).join(" → ");
     let src = st.target_source === "manual" ? "entered manually" : "from setpoint history";
-    $("ctl-target").innerHTML = tgts.length
-      ? `Target ${tgts.map(t => Number(t).toFixed(1) + " °C").join(" → ")} <span>(${src})</span> · <button class="linkish" id="target-open">change</button>`
+    $("ctl-target").innerHTML = steps.length
+      ? `Target ${timeline} <span>(${src})</span> · <button class="linkish" id="target-open">change</button>`
       : `No target recorded for this batch (setpoints weren't logged before Nov 2026). <button class="linkish" id="target-open">Enter target</button>`;
     $("target-open").onclick = () => openTargetEdit(st);
 

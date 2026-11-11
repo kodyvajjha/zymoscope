@@ -3,6 +3,10 @@
 Connects to the broker, subscribes to zymoscope/+/telemetry, parses JSON
 payloads, stores them via db.py, and notifies registered callbacks (used by
 the WebSocket layer to push live updates).
+
+Also subscribes to zymoscope/+/status (online/offline/OTA events). Those go
+only to the status callbacks: they are not telemetry, so they must not be
+stored, update `latest`, or count as a sign of life for the plug watchdog.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ latest: dict[str, dict[str, Any]] = {}
 
 # Registered callbacks: called with (device_id, payload_dict).
 _callbacks: list[Callable[[str, dict[str, Any]], Any]] = []
+_status_callbacks: list[Callable[[str, dict[str, Any]], Any]] = []
 
 # Reference to the running event loop (set by the server on startup).
 _loop: asyncio.AbstractEventLoop | None = None
@@ -50,6 +55,18 @@ def unregister_callback(cb: Callable[[str, dict[str, Any]], Any]) -> None:
         pass
 
 
+def register_status_callback(cb: Callable[[str, dict[str, Any]], Any]) -> None:
+    """cb(device_id, status_payload), called from the MQTT thread."""
+    _status_callbacks.append(cb)
+
+
+def unregister_status_callback(cb: Callable[[str, dict[str, Any]], Any]) -> None:
+    try:
+        _status_callbacks.remove(cb)
+    except ValueError:
+        pass
+
+
 def publish_command(device_id: str, payload: dict[str, Any]) -> None:
     """Publish a command to a device via MQTT."""
     if _client is None or not _client.is_connected():
@@ -70,6 +87,7 @@ def _on_connect(
     if rc == 0:
         log.info("MQTT connected to %s:%s", settings.MQTT_BROKER, settings.MQTT_PORT)
         client.subscribe("zymoscope/+/telemetry", qos=1)
+        client.subscribe("zymoscope/+/status", qos=1)
     else:
         log.error("MQTT connection failed with code %s", rc)
 
@@ -83,12 +101,25 @@ def _on_message(
         log.warning("Bad payload on %s: %r", msg.topic, msg.payload[:200])
         return
 
-    # Extract device_id from topic: zymoscope/<device_id>/telemetry
+    if not isinstance(payload, dict):
+        return
+
+    # Extract device_id from topic: zymoscope/<device_id>/<kind>
     parts = msg.topic.split("/")
     if len(parts) >= 2:
         device_id = parts[1]
     else:
         device_id = payload.get("device_id", "unknown")
+
+    if len(parts) >= 3 and parts[2] == "status":
+        for cb in list(_status_callbacks):
+            try:
+                cb(device_id, payload)
+            except Exception:
+                log.exception("Status callback error")
+        return
+    if len(parts) >= 3 and parts[2] != "telemetry":
+        return
 
     payload["device_id"] = device_id
     # Stamp with receive time so the snapshot sent to newly opened pages
