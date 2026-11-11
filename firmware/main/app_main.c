@@ -6,13 +6,15 @@
  *   - HX711 load cell ADC (GPIO 18/19)
  *   - BME280 ambient temp/humidity/pressure (I2C 0x76)
  *   - SSD1306 OLED display (I2C 0x3C)
- *   - PID temperature controller driving relays (GPIO 25/26)
+ *   - PID temperature controller, time-proportioned relays (GPIO 25/26)
  *   - Wi-Fi STA with MQTT telemetry
  *
  * Three FreeRTOS tasks:
  *   sensor_task     — reads all sensors every 5 s, updates OLED
- *   control_task    — runs PID every 5 s, drives heat/cool relays
- *   telemetry_task  — publishes MQTT JSON every 30 s
+ *   control_task    — runs PID every 5 s, time-proportions heat/cool relays
+ *   telemetry_task  — publishes MQTT JSON every 30 s, and immediately
+ *                     when a relay changes (the dashboard drives the Kasa
+ *                     plug from telemetry, so this keeps the plug in step)
  */
 
 #include <math.h>
@@ -72,12 +74,38 @@ static struct {
 #endif
 
 /* ------------------------------------------------------------------ */
-/*  PID defaults                                                      */
+/*  Temperature control tuning                                        */
+/*                                                                    */
+/*  Tuned in simulation against a 2-state model (heat mat -> vessel)  */
+/*  fitted to logged telemetry: time constants ~5 and ~19 min, ~15 s  */
+/*  delay, heat mat alone tops out ~40 C. Robust to +-20-30% heater   */
+/*  power and +60 s extra delay. See docs/pid-tuning.md.              */
 /* ------------------------------------------------------------------ */
-#define PID_KP  2.0f
-#define PID_KI  0.1f
-#define PID_KD  0.5f
+#define PID_KP          0.15f    /* duty per degC of error            */
+#define PID_TI_S        1200.0f  /* integral time, s                  */
+#define PID_TD_S        60.0f    /* derivative time, s                */
+#define CONTROL_PERIOD_MS   5000
+/* Time-proportioned output: on for duty*window each window. Shorter
+   windows hold tighter but click the plug relay more often:
+   300 s ~0.3 C swing / ~12 switches/h, 420 s ~0.45 C / ~8/h,
+   600 s ~0.85 C / ~6/h (simulated worst cases).                      */
+#define TPO_WINDOW_S    420.0f
+#define TPO_MIN_PULSE_S 60.0f
 #define PID_DEFAULT_SETPOINT  20.0f   /* degrees C */
+
+/* The integral is the learned steady-state duty (~0.6 to hold 34 C here).
+   It rebuilds slowly, so it is saved to NVS and restored after a reboot
+   (e.g. an OTA) -- otherwise a held ferment sags ~3 C for an hour. Only
+   restored if the first reading is near the setpoint; a cold warm-up
+   starts from zero to avoid overshoot. */
+#define PID_I_SAVE_MIN_S      600     /* at most one NVS write per 10 min */
+#define PID_I_SAVE_DELTA      0.05f
+#define PID_I_RESTORE_BAND_C  1.0f
+#define PID_I_DEFAULT         0.5f    /* used near setpoint if nothing saved yet */
+
+/* Telemetry task handle, so control_task can trigger an immediate publish
+   when a relay changes. */
+static TaskHandle_t telemetry_task_handle;
 
 /* ------------------------------------------------------------------ */
 /*  Crude specific-gravity estimator from weight loss                 */
@@ -202,6 +230,33 @@ static void sensor_task(void *arg)
 /*  control_task — PID temperature control every 5 s                  */
 /* ------------------------------------------------------------------ */
 
+static bool nvs_get_float(const char *key, float *out)
+{
+    nvs_handle_t nvs;
+    bool ok = false;
+    if (nvs_open("zymoscope", NVS_READONLY, &nvs) == ESP_OK) {
+        uint32_t raw;
+        if (nvs_get_u32(nvs, key, &raw) == ESP_OK) {
+            memcpy(out, &raw, sizeof(float));
+            ok = isfinite(*out);
+        }
+        nvs_close(nvs);
+    }
+    return ok;
+}
+
+static void nvs_set_float(const char *key, float v)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("zymoscope", NVS_READWRITE, &nvs) == ESP_OK) {
+        uint32_t raw;
+        memcpy(&raw, &v, sizeof(float));
+        nvs_set_u32(nvs, key, raw);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+
 static void control_task(void *arg)
 {
     (void)arg;
@@ -221,7 +276,20 @@ static void control_task(void *arg)
     }
 
     pid_ctrl_t pid;
-    pid_init(&pid, PID_KP, PID_KI, PID_KD, initial_sp);
+    pid_init(&pid, PID_KP, PID_TI_S, PID_TD_S, initial_sp);
+    tpo_t tpo;
+    tpo_init(&tpo, TPO_WINDOW_S, TPO_MIN_PULSE_S);
+    int prev_heat = 0, prev_cool = 0, prev_dir = 0;
+    int64_t last_us = esp_timer_get_time();
+
+    float saved_i = NAN;
+    float restore_i = PID_I_DEFAULT;
+    if (nvs_get_float("pid_i", &saved_i)) {
+        restore_i = saved_i;
+    }
+    bool restore_pending = true;
+    int64_t last_i_save_us = last_us;
+    TickType_t wake = xTaskGetTickCount();
 
     if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
         shared.setpoint = initial_sp;
@@ -263,26 +331,52 @@ static void control_task(void *arg)
             xSemaphoreGive(state_mutex);
         }
 
+        int64_t now_us = esp_timer_get_time();
+        float dt_s = (now_us - last_us) / 1e6f;
+        last_us = now_us;
+
         int heat = 0, cool = 0;
         float output = 0.0f;
 
         if (isnan(temp)) {
-            /* Fail safe: no valid probe reading → both relays OFF, and
-             * clear the integrator so it doesn't resume with stale windup. */
-            pid_reset(&pid);
+            /* Fail safe: no valid probe reading → both relays OFF. Restart
+             * the derivative filter and the output window, but keep the
+             * integral: it's the learned holding duty, and with conditional
+             * integration it can't wind up while we're off. */
+            pid.have_meas = false;
+            tpo_reset(&tpo);
             ESP_LOGW(TAG, "No valid DS18B20 reading — relays forced OFF");
         } else {
-            /* Run PID */
-            output = pid_update(&pid, temp);
+            if (restore_pending) {
+                restore_pending = false;
+                if (fabsf(pid.setpoint - temp) < PID_I_RESTORE_BAND_C) {
+                    pid.integral = fmaxf(pid.out_min, fminf(pid.out_max, restore_i));
+                    ESP_LOGI(TAG, "Restored PID integral %.2f%s", pid.integral,
+                             isnan(saved_i) ? " (default)" : " from NVS");
+                }
+            }
 
-            /* Drive relays:
-             *   output > 0.1  → heat ON,  cool OFF
-             *   output < -0.1 → heat OFF, cool ON
-             *   otherwise     → both OFF (deadband)
-             */
-            if (output > 0.1f) {
+            output = pid_update(&pid, temp, dt_s);
+
+            if (now_us - last_i_save_us >= PID_I_SAVE_MIN_S * 1000000LL &&
+                !(fabsf(pid.integral - saved_i) < PID_I_SAVE_DELTA)) {
+                nvs_set_float("pid_i", pid.integral);
+                saved_i = pid.integral;
+                last_i_save_us = now_us;
+            }
+
+            /* One window serves both directions: positive output is heat
+               duty, negative is cool duty, so they never overlap. A change
+               of direction starts a fresh window. */
+            int dir = (output > 0.0f) - (output < 0.0f);
+            if (dir != 0 && dir != prev_dir) {
+                tpo_reset(&tpo);
+            }
+            if (dir != 0) prev_dir = dir;
+            bool on = tpo_update(&tpo, fabsf(output), dt_s);
+            if (on && output > 0.0f) {
                 heat = 1;
-            } else if (output < -0.1f) {
+            } else if (on && output < 0.0f) {
                 cool = 1;
             }
         }
@@ -299,10 +393,16 @@ static void control_task(void *arg)
             xSemaphoreGive(state_mutex);
         }
 
-        ESP_LOGD(TAG, "PID: temp=%.1f sp=%.1f out=%.2f heat=%d cool=%d",
-                 temp, pid.setpoint, output, heat, cool);
+        if ((heat != prev_heat || cool != prev_cool) && telemetry_task_handle) {
+            xTaskNotifyGive(telemetry_task_handle);
+        }
+        prev_heat = heat;
+        prev_cool = cool;
 
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        ESP_LOGI(TAG, "PID: temp=%.2f sp=%.1f out=%.2f (I=%.2f) heat=%d cool=%d",
+                 temp, pid.setpoint, output, pid.integral, heat, cool);
+
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(CONTROL_PERIOD_MS));
     }
 }
 
@@ -314,8 +414,22 @@ static void telemetry_task(void *arg)
 {
     (void)arg;
 
+    const TickType_t period = pdMS_TO_TICKS(30000);
+    TickType_t next = xTaskGetTickCount() + period;
+
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        /* Sleep until the next periodic publish, or until control_task
+           signals a relay change (then publish right away so the plug
+           follows; the periodic schedule is unchanged). */
+        TickType_t now = xTaskGetTickCount();
+        TickType_t wait = (TickType_t)(next - now);
+        if ((int32_t)wait < 0) wait = 0;
+        if (ulTaskNotifyTake(pdTRUE, wait) == 0) {
+            next += period;
+            if ((int32_t)(xTaskGetTickCount() - next) > 0) {
+                next = xTaskGetTickCount() + period;   /* fell behind */
+            }
+        }
 
         if (!mqtt_is_connected()) {
             ESP_LOGW(TAG, "MQTT not connected, skipping telemetry");
@@ -429,9 +543,10 @@ void app_main(void)
     oled_show_status(0, 0, PID_DEFAULT_SETPOINT, 0, 0, wifi_sta_is_connected());
 
     /* ---- Launch tasks ---- */
+    /* telemetry first, so its handle exists before control_task uses it */
+    xTaskCreate(telemetry_task, "telemetry", 4096, NULL, 4, &telemetry_task_handle);
     xTaskCreate(sensor_task,    "sensor",    4096, NULL, 5, NULL);
     xTaskCreate(control_task,   "control",   4096, NULL, 5, NULL);
-    xTaskCreate(telemetry_task, "telemetry", 4096, NULL, 4, NULL);
 
     ESP_LOGI(TAG, "All tasks started. Zymoscope v2 running.");
 }

@@ -26,7 +26,7 @@ runs the web app and adds a camera pipeline. The ESP32 node stays dumb.
 - `firmware/` — ESP-IDF v5.x C firmware
   - `main/sensor/` — ds18b20 (1-Wire), hx711 (load cell ADC), bme280 (I2C)
   - `main/display/` — SSD1306 OLED driver with 8x8 font
-  - `main/control/` — PID temperature controller
+  - `main/control/` — PID temperature controller + time-proportioned output
   - `main/comms/` — Wi-Fi STA + MQTT client + OTA (`ota.c`)
   - `partitions.csv` — 4 MB, two OTA slots (nvs kept at 0x9000/0x6000)
   - `tools/ota_push.py` — push a build over the air (see `docs/ota.md`)
@@ -71,6 +71,7 @@ python -m zymoscope.server
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
 - `PLUG_WATCHDOG_SEC` (default 180): dashboard switches plugs off if no telemetry arrives for this long; 0 disables
 - Firmware fails safe: no valid DS18B20 reading → both relays OFF (no BME280 fallback)
+- Control: PID in physical units (Kp/Ti/Td `#define`s in app_main.c) → time-proportioned relay output (420 s window, 60 s min pulse); relay changes trigger an immediate telemetry publish so the Kasa plug follows. Integral persisted in NVS (`pid_i`). Model + tuning rationale: docs/pid-tuning.md
 - python-kasa controls TP-Link Kasa plugs locally (no cloud). KP115 provides energy monitoring.
 
 ## Hardware (prototype)
