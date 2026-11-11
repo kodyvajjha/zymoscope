@@ -24,6 +24,7 @@ static const char *TAG = "ota";
 #define OTA_URL_MAX  256
 
 static volatile bool          busy = false;
+static volatile int           progress_pct = -1;   /* for the OLED */
 static char                   pending_url[OTA_URL_MAX];
 static ota_pre_restart_cb_t   pre_restart_cb = NULL;
 static esp_timer_handle_t     verify_timer = NULL;
@@ -40,6 +41,7 @@ static void report(const char *state, int progress, const char *detail)
              "\"detail\":\"%s\"}",
              state, progress, detail ? detail : "");
     mqtt_publish_status(json, false);
+    progress_pct = strcmp(state, "failed") == 0 ? -1 : progress;
     ESP_LOGI(TAG, "%s (%d%%) %s", state, progress, detail ? detail : "");
 }
 
@@ -121,6 +123,11 @@ bool ota_mark_valid(void)
     }
     ESP_LOGE(TAG, "Failed to mark image valid");
     return false;
+}
+
+int ota_progress(void)
+{
+    return busy ? progress_pct : -1;
 }
 
 bool ota_in_progress(void)

@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 #define OLED_I2C_ADDR  0x3C
 #define OLED_WIDTH     128
@@ -17,13 +18,12 @@
  */
 esp_err_t oled_init(void);
 
-/**
- * Clear the entire framebuffer and push to display.
- */
+/** Blank the panel. */
 void oled_clear(void);
 
-/**
- * Draw a status screen with the main fermentation telemetry.
- */
-void oled_show_status(float temp, float ambient_temp, float setpoint,
-                      int heater, int cooler, bool wifi_connected);
+/** Push a 1024-byte framebuffer (gfx.h layout) to the panel. ~95 ms at
+ *  100 kHz I2C. */
+esp_err_t oled_flush(const uint8_t *fb);
+
+/** 0x00..0xFF; lower is dimmer and slows burn-in. */
+void oled_set_contrast(uint8_t level);

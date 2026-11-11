@@ -51,5 +51,8 @@ esp_err_t ota_start(const char *url);
 /** True while an update is downloading / being written. */
 bool ota_in_progress(void);
 
+/** Download progress 0..100 while an update runs, else -1. */
+int ota_progress(void);
+
 /** Short label for the running image's OTA state ("valid", "pending_verify", ...). */
 const char *ota_state_str(void);

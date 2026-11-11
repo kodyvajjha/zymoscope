@@ -17,6 +17,7 @@ typedef struct {
     int   relay1;
     int   relay2;
     bool  wifi_connected;
+    float setpoint;      /* target the controller is using (NAN = omit) */
 } telemetry_t;
 
 /**

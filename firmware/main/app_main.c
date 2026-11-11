@@ -9,12 +9,13 @@
  *   - PID temperature controller, time-proportioned relays (GPIO 25/26)
  *   - Wi-Fi STA with MQTT telemetry
  *
- * Three FreeRTOS tasks:
- *   sensor_task     — reads all sensors every 5 s, updates OLED
+ * Four FreeRTOS tasks:
+ *   sensor_task     — reads all sensors every 5 s
  *   control_task    — runs PID every 5 s, time-proportions heat/cool relays
  *   telemetry_task  — publishes MQTT JSON every 30 s, and immediately
  *                     when a relay changes (the dashboard drives the Kasa
  *                     plug from telemetry, so this keeps the plug in step)
+ *   display_task    — draws the OLED pages (display/display.c)
  */
 
 #include <math.h>
@@ -35,6 +36,7 @@
 #include "sensor/hx711.h"
 #include "sensor/bme280_i2c.h"
 #include "display/oled.h"
+#include "display/display.h"
 #include "control/pid.h"
 #include "comms/wifi_sta.h"
 #include "comms/mqtt_client.h"
@@ -52,6 +54,10 @@ static const char *TAG = "zymoscope";
 /*  Shared state (protected by mutex)                                 */
 /* ------------------------------------------------------------------ */
 static SemaphoreHandle_t state_mutex;
+
+/* Held by sensor_task while it bit-bangs the DS18B20, so the display task
+   never puts OLED traffic on the shared power rail mid-read. */
+static SemaphoreHandle_t onewire_quiet;
 
 static struct {
     float temps[DS18B20_MAX_SENSORS];
@@ -171,15 +177,18 @@ static void sensor_task(void *arg)
         float weight = 0;
 
         /* DS18B20 — read first, before any I2C activity */
-        if (ds18b20_read_temps(temps, &temp_count) == ESP_OK) {
+        xSemaphoreTake(onewire_quiet, portMAX_DELAY);
+        esp_err_t ds_err = ds18b20_read_temps(temps, &temp_count);
+        /* Settling delay before any I2C (BME280 here, or an OLED frame
+           from the display task) so bus noise can't couple into the
+           1-Wire line during the read's tail */
+        vTaskDelay(pdMS_TO_TICKS(50));
+        xSemaphoreGive(onewire_quiet);
+        if (ds_err == ESP_OK) {
             for (int i = 0; i < temp_count; i++) {
                 ESP_LOGI(TAG, "DS18B20[%d]: %.2f C", i, temps[i]);
             }
         }
-
-        /* Brief settling delay before I2C sensors to avoid power rail noise
-           coupling into the 1-Wire bus during the last read's tail */
-        vTaskDelay(pdMS_TO_TICKS(50));
 
         /* BME280 */
         if (bme280_read(&bme_t, &bme_h, &bme_p) == ESP_OK) {
@@ -210,17 +219,6 @@ static void sensor_task(void *arg)
             shared.gravity_est  = sg;
             xSemaphoreGive(state_mutex);
         }
-
-        /* Update OLED */
-        float display_temp = (temp_count > 0) ? temps[0] : NAN;
-        float sp = PID_DEFAULT_SETPOINT;
-        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
-            sp = shared.setpoint;
-            xSemaphoreGive(state_mutex);
-        }
-        oled_show_status(display_temp, bme_t, sp,
-                         shared.relay_heat, shared.relay_cool,
-                         wifi_sta_is_connected());
 
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
@@ -317,6 +315,9 @@ static void control_task(void *arg)
                 shared.setpoint = new_sp;
                 xSemaphoreGive(state_mutex);
             }
+            /* Report the new target right away: the dashboard logs target
+               changes (batch history) from telemetry. */
+            if (telemetry_task_handle) xTaskNotifyGive(telemetry_task_handle);
         }
 
         /* Get current fermentation temperature from the DS18B20 probe.
@@ -399,6 +400,8 @@ static void control_task(void *arg)
         prev_heat = heat;
         prev_cool = cool;
 
+        display_set_readings(temp, pid.setpoint, output, heat, cool);
+
         ESP_LOGI(TAG, "PID: temp=%.2f sp=%.1f out=%.2f (I=%.2f) heat=%d cool=%d",
                  temp, pid.setpoint, output, pid.integral, heat, cool);
 
@@ -437,6 +440,7 @@ static void telemetry_task(void *arg)
         }
 
         telemetry_t telem = {0};
+        telem.setpoint = NAN;   /* omitted unless read below */
 
         if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
             memcpy(telem.temp_c, shared.temps, sizeof(shared.temps));
@@ -448,6 +452,7 @@ static void telemetry_task(void *arg)
             telem.relay1        = shared.relay_heat;
             telem.relay2        = shared.relay_cool;
             telem.wifi_connected = wifi_sta_is_connected();
+            telem.setpoint      = shared.setpoint;
             xSemaphoreGive(state_mutex);
         }
 
@@ -487,9 +492,11 @@ void app_main(void)
     /* Create shared-state mutex */
     state_mutex = xSemaphoreCreateMutex();
     configASSERT(state_mutex);
+    onewire_quiet = xSemaphoreCreateMutex();
+    configASSERT(onewire_quiet);
     memset(&shared, 0, sizeof(shared));
     shared.gravity_est = ASSUMED_OG;
-    shared.setpoint = PID_DEFAULT_SETPOINT;
+    shared.setpoint = NAN;     /* set by control_task from NVS */
 
     /* ---- Init subsystems ---- */
 
@@ -502,7 +509,8 @@ void app_main(void)
     }
 
     /* OLED (uses I2C bus set up by bme280_init) */
-    if (oled_init() != ESP_OK) {
+    bool have_oled = oled_init() == ESP_OK;
+    if (!have_oled) {
         ESP_LOGW(TAG, "OLED init failed — continuing without display");
     }
 
@@ -539,8 +547,9 @@ void app_main(void)
         mqtt_client_init(MQTT_BROKER_URI);
     }
 
-    /* Show initial screen */
-    oled_show_status(0, 0, PID_DEFAULT_SETPOINT, 0, 0, wifi_sta_is_connected());
+    if (have_oled && display_start(onewire_quiet) != ESP_OK) {
+        ESP_LOGW(TAG, "Display task failed to start");
+    }
 
     /* ---- Launch tasks ---- */
     /* telemetry first, so its handle exists before control_task uses it */

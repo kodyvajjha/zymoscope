@@ -7,6 +7,9 @@
  * Subscribes to                zymoscope/{device_id}/cmd
  *   {"setpoint": <float>}  — change PID target
  *   {"ota_url": "<url>"}   — download + boot new firmware (see ota.h)
+ *   {"display": "next"|"main"|"chart"|"info"|"pet"} — OLED page
+ *   {"batch_name": "<name>", "batch_elapsed": <s>} — OLED batch strip
+ *                            ("" clears it)
  *
  * Uses the ESP-MQTT component shipped with ESP-IDF v5.x.
  */
@@ -26,6 +29,7 @@
 #include "esp_system.h"
 
 #include "comms/ota.h"
+#include "display/display.h"
 
 static const char *TAG = "mqtt";
 
@@ -48,16 +52,27 @@ static char topic_status[64];
 
 static const char LWT_OFFLINE[] = "{\"event\":\"offline\"}";
 
+/* Pointer just past the ':' of "key": ..., or NULL. Only a quoted word
+   followed by a colon counts, so a *value* that happens to equal a key
+   name (e.g. a batch called "setpoint") is never mistaken for it. */
+static const char *json_find_value(const char *src, const char *key)
+{
+    char pat[40];
+    snprintf(pat, sizeof(pat), "\"%s\"", key);
+    for (const char *p = strstr(src, pat); p; p = strstr(p + 1, pat)) {
+        const char *q = p + strlen(pat);
+        while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
+        if (*q == ':') return q + 1;
+    }
+    return NULL;
+}
+
 /* Copy the JSON string value of "key" from src into out. Returns true if
    found. Minimal: no escape handling (URLs/versions don't need it). */
 static bool json_get_string(const char *src, const char *key,
                             char *out, size_t out_len)
 {
-    char pat[40];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(src, pat);
-    if (!p) return false;
-    p = strchr(p + strlen(pat), ':');
+    const char *p = json_find_value(src, key);
     if (!p) return false;
     p = strchr(p, '"');
     if (!p) return false;
@@ -131,21 +146,31 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
                 }
             }
 
+            static char word[32];
+            if (json_get_string(buf, "display", word, sizeof(word))) {
+                display_command(word);
+            }
+
+            static char bname[48];
+            if (json_get_string(buf, "batch_name", bname, sizeof(bname))) {
+                double el = 0;
+                const char *e = json_find_value(buf, "batch_elapsed");
+                if (!e || sscanf(e, "%lf", &el) != 1 || el < 0 || el > 4e9) el = 0;
+                display_set_batch(bname, (uint32_t)el);
+            }
+
             /* Simple parser — no JSON lib dependency */
-            const char *sp = strstr(buf, "\"setpoint\"");
+            const char *sp = json_find_value(buf, "setpoint");
             if (sp) {
-                sp = strchr(sp, ':');
-                if (sp) {
-                    float val;
-                    if (sscanf(sp + 1, "%f", &val) == 1 &&
-                        val >= SETPOINT_MIN_C && val <= SETPOINT_MAX_C) {
-                        portENTER_CRITICAL(&cmd_mux);
-                        cmd_setpoint = val;
-                        portEXIT_CRITICAL(&cmd_mux);
-                        ESP_LOGI(TAG, "Setpoint command: %.1f C", val);
-                    } else {
-                        ESP_LOGW(TAG, "Ignoring invalid setpoint command: %s", buf);
-                    }
+                float val;
+                if (sscanf(sp, "%f", &val) == 1 &&
+                    val >= SETPOINT_MIN_C && val <= SETPOINT_MAX_C) {
+                    portENTER_CRITICAL(&cmd_mux);
+                    cmd_setpoint = val;
+                    portEXIT_CRITICAL(&cmd_mux);
+                    ESP_LOGI(TAG, "Setpoint command: %.1f C", val);
+                } else {
+                    ESP_LOGW(TAG, "Ignoring invalid setpoint command: %s", buf);
                 }
             }
         }
@@ -243,7 +268,7 @@ esp_err_t mqtt_publish_telemetry(const telemetry_t *data)
                     "\"relay1\":%d,"
                     "\"relay2\":%d,"
                     "\"wifi\":%s,"
-                    "\"fw\":\"%s\"}",
+                    "\"fw\":\"%s\"",
                     data->humidity,
                     data->pressure_hpa,
                     data->weight_g,
@@ -252,6 +277,11 @@ esp_err_t mqtt_publish_telemetry(const telemetry_t *data)
                     data->relay2,
                     data->wifi_connected ? "true" : "false",
                     esp_app_get_description()->version);
+    if (!isnan(data->setpoint)) {
+        pos += snprintf(json + pos, sizeof(json) - pos,
+                        ",\"setpoint\":%.2f", data->setpoint);
+    }
+    pos += snprintf(json + pos, sizeof(json) - pos, "}");
 
     int msg_id = esp_mqtt_client_publish(client, topic_telemetry,
                                          json, 0, 1, 0);
