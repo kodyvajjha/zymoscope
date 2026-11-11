@@ -171,6 +171,8 @@
   .batch-list a:hover .bname { color: var(--accent); }
   .bname { font-size: .85rem; font-weight: 600; }
   .bmeta { font-size: .72rem; color: var(--dim); margin-top: 1px; }
+  .bctl { font-size: .72rem; color: var(--dim); margin-top: 1px; }
+  .bctl b { color: var(--text); font-weight: 600; }
   .live-tag { color: var(--green); font-size: .68rem; font-weight: 700; margin-left: .3rem; }
   .show-all { margin-top: .4rem; }
 
@@ -754,6 +756,18 @@
     });
   }
 
+  // One-line control summary from the stats saved when a batch ends.
+  function batchCtlLine(raw) {
+    let st;
+    try { st = raw ? JSON.parse(raw) : null; } catch { st = null; }
+    if (!st || st.within_05_pct == null) return "";
+    const off = st.mean_offset_c, band = st.band90_c || [0, 0];
+    const half = Math.max(Math.abs(band[0]), Math.abs(band[1]));
+    return `<div class="bctl" title="Average offset · 90% spread · time within ±0.5 °C of target">` +
+      `<b>${off >= 0 ? "+" : "−"}${Math.abs(off).toFixed(2)}°</b> avg · ` +
+      `±${half.toFixed(2)}° · <b>${Math.round(st.within_05_pct)}%</b> in ±0.5°</div>`;
+  }
+
   function renderBatchList() {
     const list = $("batch-list");
     if (!batches.length) { list.innerHTML = '<li class="small-dim">No batches yet</li>'; $("batch-more").hidden = true; return; }
@@ -765,7 +779,7 @@
       const meta = [when, dur, b.style && b.style.trim()].filter(Boolean).map(escapeHtml).join(" · ");
       return `<li><a href="/batches/${Number(b.id)}">
         <div class="bname">${escapeHtml(b.name.trim())}${b.ended_at ? "" : '<span class="live-tag">● LIVE</span>'}</div>
-        <div class="bmeta">${meta}</div></a></li>`;
+        <div class="bmeta">${meta}</div>${batchCtlLine(b.stats)}</a></li>`;
     }).join("");
     const more = $("batch-more");
     more.hidden = batches.length <= 6;

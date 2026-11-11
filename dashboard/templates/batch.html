@@ -50,6 +50,20 @@
   .stat .val { font-size:1.3rem; font-weight:600; margin-top:.2rem; }
   .notes { white-space:pre-wrap; color:var(--dim); font-size:.9rem; margin-top:.6rem; }
   .live-dot { color:var(--green); }
+  .ctl-head { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; flex-wrap:wrap; margin-bottom:.8rem; }
+  .ctl-head h3 { font-size:1rem; }
+  .ctl-head .sub { font-size:.8rem; color:var(--dim); }
+  .stat .hint { font-size:.72rem; color:var(--dim); margin-top:.2rem; }
+  .stat .val.good { color:var(--green); }
+  .stat .val.warn { color:var(--accent); }
+  .stat .val.bad { color:var(--heat); }
+  .ctl-foot { font-size:.8rem; color:var(--dim); margin-top:.8rem; line-height:1.5; }
+  .target-edit { display:flex; gap:.4rem; align-items:center; font-size:.85rem; }
+  .target-edit[hidden] { display:none; }
+  .target-edit input { width:5.5rem; background:var(--bg); color:var(--text); border:1px solid var(--border);
+    border-radius:4px; padding:.3rem .4rem; font-size:.85rem; }
+  .linkish { background:none; border:none; color:var(--dim); text-decoration:underline; cursor:pointer; font-size:.8rem; }
+  .linkish:hover { color:var(--text); }
 </style>
 </head>
 <body>
@@ -87,6 +101,35 @@
       <div class="stat"><div class="label">Mean °C</div><div class="val" id="s-mean">—</div></div>
       <div class="stat"><div class="label">Duration</div><div class="val" id="s-dur">—</div></div>
     </div>
+  </div>
+
+  <div class="panel" id="ctl-panel">
+    <div class="ctl-head">
+      <div>
+        <h3>Temperature control <span class="sub" id="ctl-sofar"></span></h3>
+        <div class="sub" id="ctl-target">—</div>
+      </div>
+      <div class="target-edit" id="target-edit" hidden>
+        <label for="target-in">Target °C</label>
+        <input id="target-in" type="number" step="0.1" min="-10" max="100">
+        <button class="btn" id="target-save">Compute</button>
+        <button class="linkish" id="target-clear" hidden>use setpoint log</button>
+        <button class="linkish" id="target-cancel">cancel</button>
+      </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat"><div class="label">Avg offset</div><div class="val" id="c-offset">—</div>
+        <div class="hint">mean of temp − target</div></div>
+      <div class="stat"><div class="label">Spread (90%)</div><div class="val" id="c-band">—</div>
+        <div class="hint">5th–95th percentile of error</div></div>
+      <div class="stat"><div class="label">Within ±0.5 °C</div><div class="val" id="c-within">—</div>
+        <div class="hint">share of hold time</div></div>
+      <div class="stat"><div class="label">Overshoot</div><div class="val" id="c-over">—</div>
+        <div class="hint">past target while settling</div></div>
+      <div class="stat"><div class="label">Heater cycles/h</div><div class="val" id="c-cycles">—</div>
+        <div class="hint">plug on-switches per hour</div></div>
+    </div>
+    <div class="ctl-foot" id="ctl-foot"></div>
   </div>
 
   <div class="panel">
@@ -128,6 +171,8 @@
     data: { datasets: [
       { label: "Temp °C", data: [], borderColor: "#f0a020", backgroundColor: "rgba(240,160,32,0.1)",
         borderWidth: 1.5, pointRadius: 0, tension: 0.2, yAxisID: "y" },
+      { label: "Target", data: [], borderColor: "#40c060", borderDash: [6, 4],
+        borderWidth: 1.2, pointRadius: 0, spanGaps: false, yAxisID: "y" },
       { label: "Heater", data: [], borderColor: "#e05040", backgroundColor: "rgba(224,80,64,0.15)",
         borderWidth: 1, pointRadius: 0, stepped: true, fill: true, yAxisID: "y1" },
     ]},
@@ -183,7 +228,7 @@
     }
 
     chart.data.datasets[0].data = temps;
-    chart.data.datasets[1].data = heater;
+    chart.data.datasets[2].data = heater;
     chart.update("none");
 
     document.getElementById("s-count").textContent = rows.length;
@@ -199,15 +244,113 @@
     }
   }
 
+  // ------------------------------------------------ control quality stats
+  const $ = id => document.getElementById(id);
+  const fmtTime = s => new Date(s * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const sgn = v => (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v).toFixed(2);
+  function grade(el, v, good, ok) {
+    el.classList.remove("good", "warn", "bad");
+    if (v == null) return;
+    el.classList.add(v <= good ? "good" : v <= ok ? "warn" : "bad");
+  }
+  let lastStats = null;
+
+  function renderStats(st) {
+    lastStats = st;
+    const set = (id, txt) => { $(id).textContent = txt; };
+    $("ctl-sofar").textContent = st.in_progress ? "(so far)" : "";
+    const pieces = st.pieces || [];
+    const tgts = [...new Set(pieces.map(p => p.target))];
+    let src = st.target_source === "manual" ? "entered manually" : "from setpoint history";
+    $("ctl-target").innerHTML = tgts.length
+      ? `Target ${tgts.map(t => Number(t).toFixed(1) + " °C").join(" → ")} <span>(${src})</span> · <button class="linkish" id="target-open">change</button>`
+      : `No target recorded for this batch (setpoints weren't logged before Nov 2026). <button class="linkish" id="target-open">Enter target</button>`;
+    $("target-open").onclick = () => openTargetEdit(st);
+
+    set("c-offset", st.mean_offset_c == null ? "—" : sgn(st.mean_offset_c) + " °C");
+    grade($("c-offset"), st.mean_offset_c == null ? null : Math.abs(st.mean_offset_c), 0.1, 0.3);
+    set("c-band", st.band90_c ? `${sgn(st.band90_c[0])} … ${sgn(st.band90_c[1])}` : "—");
+    grade($("c-band"), st.band90_c ? Math.max(Math.abs(st.band90_c[0]), Math.abs(st.band90_c[1])) : null, 0.3, 0.6);
+    set("c-within", st.within_05_pct == null ? "—" : st.within_05_pct.toFixed(0) + " %");
+    grade($("c-within"), st.within_05_pct == null ? null : 100 - st.within_05_pct, 5, 25);
+    set("c-over", st.overshoot_c == null ? "—" : st.overshoot_c.toFixed(2) + " °C");
+    grade($("c-over"), st.overshoot_c, 0.3, 0.8);
+    set("c-cycles", st.cycles_per_h == null ? "—" : st.cycles_per_h.toFixed(1));
+
+    const foot = [];
+    const holds = pieces.filter(p => p.hold_from);
+    if (holds.length) {
+      foot.push(`Hold measured from ${fmtTime(holds[0].hold_from)} (${st.hold_hours} h): ` +
+        `warm-up and the first ${st.settle_min} min after reaching the target are excluded.`);
+      const extra = [];
+      if (st.p2p_c != null) extra.push(`peak-to-peak ${st.p2p_c.toFixed(2)} °C`);
+      if (st.heat_duty_pct != null) extra.push(`heater on ${st.heat_duty_pct.toFixed(0)} % of the time`);
+      if (extra.length) foot.push(extra.join(" · ") + ".");
+    } else if (st.note) {
+      foot.push(st.note.charAt(0).toUpperCase() + st.note.slice(1) + ".");
+      if (pieces.some(p => p.reached_at == null)) foot.push("The target hasn't been reached yet.");
+    }
+    $("ctl-foot").textContent = foot.join(" ");
+
+    // Target line on the chart (one flat segment per target, gaps between).
+    const line = [];
+    for (const p of pieces) {
+      line.push({ x: p.from * 1000, y: p.target }, { x: p.to * 1000, y: p.target }, { x: p.to * 1000 + 1, y: null });
+    }
+    chart.data.datasets[1].data = line;
+    chart.update("none");
+  }
+
+  function openTargetEdit(st) {
+    $("target-edit").hidden = false;
+    const cur = (st.pieces && st.pieces.length) ? st.pieces[0].target : st.suggested_target;
+    $("target-in").value = cur != null ? Number(cur).toFixed(1) : "";
+    $("target-clear").hidden = st.target_source !== "manual";
+    $("target-in").focus();
+  }
+  async function saveTarget(target) {
+    $("target-save").disabled = true;
+    try {
+      const res = await fetch(`/api/batches/${batchId}/target`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target }),
+      });
+      const st = await res.json();
+      if (!res.ok) throw new Error(st.error || res.status);
+      $("target-edit").hidden = true;
+      renderStats(st);
+    } catch (e) {
+      alert("Couldn't set target: " + e.message);
+    } finally {
+      $("target-save").disabled = false;
+    }
+  }
+  $("target-save").addEventListener("click", () => {
+    const v = parseFloat($("target-in").value);
+    if (!isFinite(v)) { $("target-in").focus(); return; }
+    saveTarget(v);
+  });
+  $("target-in").addEventListener("keydown", e => { if (e.key === "Enter") $("target-save").click(); });
+  $("target-clear").addEventListener("click", () => saveTarget(null));
+  $("target-cancel").addEventListener("click", () => { $("target-edit").hidden = true; });
+
+  async function loadStats() {
+    try {
+      const res = await fetch(`/api/batches/${batchId}/stats`);
+      if (res.ok) renderStats(await res.json());
+    } catch {}
+  }
+
   load();
-  if (!batchEnded) setInterval(load, 15000);
+  loadStats();
+  if (!batchEnded) { setInterval(load, 15000); setInterval(loadStats, 60000); }
 
   const endBtn = document.getElementById("end-btn");
   if (endBtn) {
     endBtn.addEventListener("click", async () => {
       if (!confirm("End this batch? This records the end time now.")) return;
       endBtn.disabled = true;
-      await fetch(`/api/batches/${batchId}/end`, { method: "POST" });
+      await fetch(`/api/batches/${batchId}/end`, { method: "POST" });  // also saves the stats
       location.reload();
     });
   }

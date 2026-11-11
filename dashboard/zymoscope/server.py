@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from . import db, mqtt_sub, smart_plug
+from . import db, mqtt_sub, smart_plug, stats
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -191,7 +191,62 @@ async def api_batch_telemetry(batch_id: int):
 @app.post("/api/batches/{batch_id}/end")
 async def api_end_batch(batch_id: int):
     await db.end_batch(batch_id)
-    return {"status": "ended", "id": batch_id}
+    result = None
+    try:
+        result = await _batch_stats(batch_id, save=True)
+    except Exception:
+        log.exception("Computing stats for batch %s failed", batch_id)
+    return {"status": "ended", "id": batch_id, "stats": result}
+
+
+async def _batch_stats(batch_id: int, save: bool = False) -> dict[str, Any] | None:
+    inp = await db.get_batch_stats_inputs(batch_id)
+    if inp is None:
+        return None
+    # A minute of CPU-bound work at most for very long batches; keep the
+    # event loop (MQTT ingest, websockets) responsive.
+    result = await asyncio.to_thread(
+        stats.compute, inp["rows"], inp["targets"], inp["t0"], inp["t1"])
+    result["target_source"] = inp["target_source"]
+    result["in_progress"] = not inp["ended"]
+    if not inp["targets"]:
+        result["suggested_target"] = await db.suggest_batch_target(batch_id)
+    if save and inp["ended"]:
+        await db.save_batch_stats(batch_id, json.dumps(result, separators=(",", ":")))
+    return result
+
+
+@app.get("/api/batches/{batch_id}/stats")
+async def api_batch_stats(batch_id: int):
+    """Temperature-control quality for a batch (see zymoscope/stats.py).
+    Computed fresh; ended batches also keep a saved copy for the list."""
+    result = await _batch_stats(batch_id, save=True)
+    if result is None:
+        return Response('{"error":"unknown batch"}', status_code=404,
+                        media_type="application/json")
+    return result
+
+
+@app.post("/api/batches/{batch_id}/target")
+async def api_batch_target(batch_id: int, request: Request):
+    """Set a manual target for a batch ({"target": 34.0}, or null to use
+    the setpoint log). Needed for batches from before setpoints were logged."""
+    data = await request.json()
+    target = data.get("target")
+    if target is not None:
+        try:
+            target = float(target)
+        except (TypeError, ValueError):
+            return Response('{"error":"invalid target"}', status_code=400,
+                            media_type="application/json")
+        if not -10 <= target <= 100:
+            return Response('{"error":"target out of range"}', status_code=400,
+                            media_type="application/json")
+    if not await db.get_batch(batch_id):
+        return Response('{"error":"unknown batch"}', status_code=404,
+                        media_type="application/json")
+    await db.set_batch_target(batch_id, target)
+    return await _batch_stats(batch_id, save=True)
 
 
 @app.get("/batches/{batch_id}", response_class=HTMLResponse)

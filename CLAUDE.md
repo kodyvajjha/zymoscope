@@ -67,6 +67,7 @@ python -m zymoscope.server
 - Dashboard runs on port 8000 by default
 - Charts use `/api/series/<id>?hours=` (SQL time-bucketed, ≤~1500 pts; implausible temps dropped) — don't fetch raw `/api/telemetry` for long ranges (full history was 21 MB / 150 s on the Pi)
 - `/api/export/<id>.csv?hours=` streams raw telemetry; `POST /api/devices/<id>` `{"name"}` renames; `index.html?range=<hours>` sets the default chart range
+- Batch control stats (`zymoscope/stats.py`): avg offset, 90% spread, % within ±0.5 °C, overshoot, heater cycles/h over the hold phase (warm-up + 60 min settle excluded). `GET /api/batches/<id>/stats`; saved to `batches.stats` on end; target comes from `setpoint_log` (logged since 2026-11-10) or a manual `batches.target` (`POST /api/batches/<id>/target`)
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
 - `PLUG_WATCHDOG_SEC` (default 180): dashboard switches plugs off if no telemetry arrives for this long; 0 disables

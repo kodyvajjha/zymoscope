@@ -87,6 +87,37 @@ async def init_db() -> None:
             )
             """
         )
+        # Every target change, so batch stats know the target at any time.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS setpoint_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT NOT NULL,
+                ts        REAL NOT NULL,
+                setpoint  REAL NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_setpoint_log ON setpoint_log(device_id, ts)"
+        )
+        # Seed the log from the current setpoint of devices that have none.
+        await db.execute(
+            """
+            INSERT INTO setpoint_log (device_id, ts, setpoint)
+            SELECT device_id, CAST(strftime('%s', updated_at) AS REAL), setpoint
+            FROM device_state
+            WHERE setpoint IS NOT NULL
+              AND device_id NOT IN (SELECT device_id FROM setpoint_log)
+            """
+        )
+        # Batch columns added after the original schema.
+        cur = await db.execute("PRAGMA table_info(batches)")
+        cols = {r[1] for r in await cur.fetchall()}
+        if "target" not in cols:   # manual target, for batches before setpoint_log
+            await db.execute("ALTER TABLE batches ADD COLUMN target REAL")
+        if "stats" not in cols:    # JSON from stats.compute(), saved at end
+            await db.execute("ALTER TABLE batches ADD COLUMN stats TEXT")
         await db.commit()
 
 
@@ -292,6 +323,16 @@ async def set_setpoint(device_id: str, setpoint: float) -> None:
             """,
             (device_id, setpoint),
         )
+        cur = await db.execute(
+            "SELECT setpoint FROM setpoint_log WHERE device_id = ? ORDER BY ts DESC LIMIT 1",
+            (device_id,),
+        )
+        last = await cur.fetchone()
+        if last is None or last[0] != setpoint:
+            await db.execute(
+                "INSERT INTO setpoint_log (device_id, ts, setpoint) VALUES (?, ?, ?)",
+                (device_id, time.time(), setpoint),
+            )
         await db.commit()
 
 
@@ -431,3 +472,79 @@ async def set_device_name(device_id: str, name: str) -> bool:
         )
         await db.commit()
         return cur.rowcount > 0
+
+
+# ---- batch temperature-control stats ----------------------------------------
+
+async def get_batch_stats_inputs(batch_id: int) -> dict[str, Any] | None:
+    """Everything stats.compute() needs for a batch: its window, telemetry
+    (ts, temp, relay1) and the target timeline (manual target if set,
+    otherwise the setpoint log)."""
+    async with _get_conn() as db:
+        cur = await db.execute(
+            """
+            SELECT id, device_id, target,
+                   CAST(strftime('%s', started_at) AS REAL) AS t0,
+                   CAST(strftime('%s', ended_at) AS REAL) AS t1
+            FROM batches WHERE id = ?
+            """,
+            (batch_id,),
+        )
+        b = await cur.fetchone()
+        if not b:
+            return None
+        t0, t1 = b["t0"], b["t1"] or time.time()
+        cur = await db.execute(
+            f"""
+            SELECT timestamp,
+                   CASE WHEN t BETWEEN -10 AND 100 AND t <> 85.0 THEN t END,
+                   relay1
+            FROM (SELECT timestamp, relay1, {_TEMP_SQL} AS t FROM telemetry
+                  WHERE device_id = ? AND timestamp BETWEEN ? AND ?)
+            ORDER BY timestamp
+            """,
+            (b["device_id"], t0, t1),
+        )
+        rows = [tuple(r) for r in await cur.fetchall()]
+        if b["target"] is not None:
+            targets, source = [(t0, float(b["target"]))], "manual"
+        else:
+            cur = await db.execute(
+                """
+                SELECT ts, setpoint FROM setpoint_log
+                WHERE device_id = :d AND ts <= :t1
+                  AND ts >= COALESCE((SELECT MAX(ts) FROM setpoint_log
+                                      WHERE device_id = :d AND ts <= :t0), :t0)
+                ORDER BY ts
+                """,
+                {"d": b["device_id"], "t0": t0, "t1": t1},
+            )
+            targets, source = [tuple(r) for r in await cur.fetchall()], "setpoint log"
+        return {"t0": t0, "t1": t1, "ended": b["t1"] is not None,
+                "rows": rows, "targets": targets, "target_source": source,
+                "manual_target": b["target"]}
+
+
+async def suggest_batch_target(batch_id: int) -> float | None:
+    """Median probe temperature over the second half of a batch, rounded to
+    0.5 °C: a starting guess for the target of an old batch."""
+    inp = await get_batch_stats_inputs(batch_id)
+    if not inp or not inp["rows"]:
+        return None
+    mid = (inp["t0"] + inp["t1"]) / 2
+    temps = sorted(T for t, T, _ in inp["rows"] if T is not None and t >= mid)
+    if not temps:
+        return None
+    return round(temps[len(temps) // 2] * 2) / 2
+
+
+async def set_batch_target(batch_id: int, target: float | None) -> None:
+    async with _get_conn() as db:
+        await db.execute("UPDATE batches SET target = ? WHERE id = ?", (target, batch_id))
+        await db.commit()
+
+
+async def save_batch_stats(batch_id: int, stats_json: str | None) -> None:
+    async with _get_conn() as db:
+        await db.execute("UPDATE batches SET stats = ? WHERE id = ?", (stats_json, batch_id))
+        await db.commit()
