@@ -460,7 +460,10 @@
     q("temp").textContent = fmtTemp(d.temp_c);
     q("humidity").textContent = fmtVal(d.humidity, 1);
     q("pressure").textContent = fmtVal(d.pressure, 1);
-    q("rssi").textContent = d.rssi != null ? d.rssi + " dBm" : "";
+    const meta = [];
+    if (d.rssi != null) meta.push(d.rssi + " dBm");
+    if (d.fw) meta.push("fw " + d.fw);
+    if (meta.length) q("rssi").textContent = meta.join(" · ");
     q("relay1").classList.toggle("on", !!d.relay1);
     q("relay2").classList.toggle("on", !!d.relay2);
     if (tsMs != null) {
@@ -686,10 +689,10 @@
       for (const b of list) {
         const li = document.createElement("li");
         const active = b.ended_at ? "" : ' <span style="color:var(--green);font-size:.7rem">● live</span>';
-        li.innerHTML = `<a href="/batches/${b.id}" style="color:var(--text);text-decoration:none">` +
-          `<strong>${b.name}</strong>${active} <span class="style">${b.style || ""}</span>` +
+        li.innerHTML = `<a href="/batches/${Number(b.id)}" style="color:var(--text);text-decoration:none">` +
+          `<strong>${escapeHtml(b.name)}</strong>${active} <span class="style">${escapeHtml(b.style || "")}</span>` +
           (b.og ? ` &middot; OG ${Number(b.og).toFixed(3)}` : "") +
-          (b.device_id ? ` &middot; ${b.device_id}` : "") +
+          (b.device_id ? ` &middot; ${escapeHtml(b.device_id)}` : "") +
           `</a>`;
         batchList.appendChild(li);
       }

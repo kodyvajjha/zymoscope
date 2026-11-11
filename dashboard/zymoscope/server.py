@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -65,15 +66,29 @@ async def lifespan(app: FastAPI):
     mqtt_sub.set_event_loop(asyncio.get_running_loop())
     mqtt_sub.register_callback(_broadcast)
     mqtt_sub.start(daemon=True)
-    # Start smart plug energy polling (every 30s) if plugs are configured.
+    # Start smart plug energy polling + stale-telemetry watchdog (every 30s)
+    # if plugs are configured.
     energy_task = None
     if settings.KASA_HEATER_HOST or settings.KASA_COOLER_HOST:
+        started_at = time.time()
+
         async def _poll_energy_loop() -> None:
             while True:
-                await smart_plug.poll_energy()
+                try:
+                    # Count server start as "last seen" so a node that is
+                    # already dead when the dashboard boots still trips it.
+                    last_ts = max(
+                        [started_at] + [
+                            d.get("timestamp", 0) for d in mqtt_sub.latest.values()
+                        ]
+                    )
+                    await smart_plug.watchdog(last_ts, time.time())
+                    await smart_plug.poll_energy()
+                except Exception:
+                    log.exception("Smart plug poll/watchdog error")
                 await asyncio.sleep(30)
         energy_task = asyncio.create_task(_poll_energy_loop())
-        log.info("Smart plug energy polling started")
+        log.info("Smart plug energy polling + watchdog started")
     log.info("Zymoscope dashboard started")
     yield
     # Shutdown

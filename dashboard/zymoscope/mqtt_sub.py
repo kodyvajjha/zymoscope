@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from typing import Any, Callable
 
 import paho.mqtt.client as mqtt
@@ -90,6 +91,9 @@ def _on_message(
         device_id = payload.get("device_id", "unknown")
 
     payload["device_id"] = device_id
+    # Stamp with receive time so the snapshot sent to newly opened pages
+    # carries the real age of the reading (and the DB row matches it).
+    payload["timestamp"] = time.time()
     latest[device_id] = payload
 
     # Persist to SQLite (needs the async event loop).

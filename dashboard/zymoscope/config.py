@@ -20,6 +20,9 @@ class Settings:
         self.KASA_HEATER_ALIAS: str = os.getenv("KASA_HEATER_ALIAS", "")
         self.KASA_COOLER_HOST: str = os.getenv("KASA_COOLER_HOST", "")
         self.KASA_COOLER_ALIAS: str = os.getenv("KASA_COOLER_ALIAS", "")
+        # Switch the plugs off if no telemetry arrives for this many seconds
+        # (ESP32 publishes every 30 s). 0 disables the watchdog.
+        self.PLUG_WATCHDOG_SEC: int = int(os.getenv("PLUG_WATCHDOG_SEC", "180"))
 
 
 settings = Settings()

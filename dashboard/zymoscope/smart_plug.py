@@ -180,46 +180,88 @@ async def get_status(configured_host: str) -> dict[str, Any] | None:
         return None
 
 
-async def handle_relay_state(relay_num: int, state: int) -> None:
+async def handle_relay_state(relay_num: int, state: int) -> bool:
     """Called when the ESP32 publishes a relay state change via MQTT.
 
     Maps relay1 -> KASA_HEATER_HOST, relay2 -> KASA_COOLER_HOST.
     If the corresponding env var is not set, the relay change is ignored
     (the ESP32 controls it directly via GPIO).
+
+    Returns True if the plug now matches *state* (or no plug is configured
+    for this relay), False if the command failed and should be retried.
     """
     if relay_num == 1:
         host = settings.KASA_HEATER_HOST
     elif relay_num == 2:
         host = settings.KASA_COOLER_HOST
     else:
-        return
+        return True
 
     if not host:
-        return
+        return True
 
     if state:
-        await turn_on(host)
-    else:
-        await turn_off(host)
+        return await turn_on(host)
+    return await turn_off(host)
 
 
-# Track previous relay states to detect changes.
-_prev_relay: dict[str, tuple[int, int]] = {}
+# Last relay state successfully applied to the plugs, per device. A relay
+# whose command failed stays out of sync here, so the next telemetry
+# message retries it instead of leaving the plug stuck in the old state.
+_prev_relay: dict[str, list[Any]] = {}
 
 
 async def on_telemetry(device_id: str, payload: dict[str, Any]) -> None:
     """Process incoming telemetry and drive smart plugs on relay changes."""
+    global _watchdog_tripped
+    _watchdog_tripped = False
+
     relay1 = payload.get("relay1", 0)
     relay2 = payload.get("relay2", 0)
 
-    prev = _prev_relay.get(device_id, (None, None))
+    prev = _prev_relay.setdefault(device_id, [None, None])
 
-    if relay1 != prev[0]:
-        await handle_relay_state(1, relay1)
-    if relay2 != prev[1]:
-        await handle_relay_state(2, relay2)
+    if relay1 != prev[0] and await handle_relay_state(1, relay1):
+        prev[0] = relay1
+    if relay2 != prev[1] and await handle_relay_state(2, relay2):
+        prev[1] = relay2
 
-    _prev_relay[device_id] = (relay1, relay2)
+
+# ---- Stale-telemetry watchdog -----------------------------------------------
+
+# True once the watchdog has cut power for the current silence. Cleared when
+# telemetry arrives again, so it fires once per silence rather than every
+# poll (and doesn't fight a manual ON from the dashboard).
+_watchdog_tripped = False
+
+
+async def watchdog(last_telemetry_ts: float, now: float) -> None:
+    """Turn heater/cooler plugs off if the ESP32 has gone quiet.
+
+    The plugs only change state when telemetry reports a relay change, so
+    if the node dies (power, Wi-Fi, crash) with relay1=1 the heater would
+    otherwise stay on indefinitely.
+    """
+    global _watchdog_tripped
+    timeout = settings.PLUG_WATCHDOG_SEC
+    if timeout <= 0 or _watchdog_tripped:
+        return
+    silence = now - last_telemetry_ts
+    if silence < timeout:
+        return
+
+    log.warning(
+        "No telemetry for %.0fs (limit %ds); switching plugs off for safety",
+        silence, timeout,
+    )
+    ok = True
+    for host in (settings.KASA_HEATER_HOST, settings.KASA_COOLER_HOST):
+        if host:
+            ok = await turn_off(host) and ok
+    if ok:
+        _watchdog_tripped = True
+        # Forget applied relay state so the next telemetry re-asserts it.
+        _prev_relay.clear()
 
 
 async def poll_energy() -> None:
