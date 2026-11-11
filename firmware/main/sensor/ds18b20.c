@@ -29,6 +29,17 @@ static portMUX_TYPE ow_mux = portMUX_INITIALIZER_UNLOCKED;
 /* Retry count for CRC failures (noise on breadboard power rails, etc.) */
 #define DS18B20_READ_RETRIES  3
 
+/* Bus enumeration attempts per call to enumerate() */
+#define DS18B20_SEARCH_ATTEMPTS  3
+
+/* After this many consecutive reads where *no* sensor answers, forget the
+   ROM list and re-enumerate (probe replugged, sensor wedged, ...). At the
+   5 s sensor_task period this is ~30 s. */
+#define DS18B20_REENUM_AFTER_FAILS  6
+
+static int fail_streak = 0;
+static int rescan_count = 0;
+
 /* ------------------------------------------------------------------ */
 /*  Low-level 1-Wire timing helpers                                   */
 /* ------------------------------------------------------------------ */
@@ -169,10 +180,15 @@ static int search_roms(void)
             int byte_idx = bit_idx / 8;
             int bit_mask = 1 << (bit_idx % 8);
 
+            /* The read-read-write triplet for each bit is timing-critical:
+               Wi-Fi interrupts (busy at boot) can stretch a slot and corrupt
+               the search, so keep it in one critical section (~210 us). */
+            portENTER_CRITICAL(&ow_mux);
             int bit_a = ow_read_bit();
             int bit_b = ow_read_bit();
 
             if (bit_a && bit_b) {
+                portEXIT_CRITICAL(&ow_mux);
                 /* No devices on bus — done */
                 goto done;
             }
@@ -202,6 +218,7 @@ static int search_roms(void)
                 rom[byte_idx] &= ~bit_mask;
             }
             ow_write_bit(dir);
+            portEXIT_CRITICAL(&ow_mux);
         }
 
         /* Validate CRC */
@@ -231,6 +248,36 @@ done:
 /*  Public API                                                        */
 /* ------------------------------------------------------------------ */
 
+/* Search the bus (with retries) and configure every sensor found.
+   Sets rom_count; returns ESP_OK if at least one sensor was found. */
+static esp_err_t enumerate(void)
+{
+    rom_count = 0;
+    for (int attempt = 0; attempt < DS18B20_SEARCH_ATTEMPTS; attempt++) {
+        if (ow_reset()) {
+            rom_count = search_roms();
+            if (rom_count > 0) break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (rom_count == 0) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    /* Set all sensors to 12-bit resolution (default, but be explicit) */
+    for (int i = 0; i < rom_count; i++) {
+        if (!ow_reset()) continue;
+        ow_write_byte(0x55);  /* Match ROM */
+        for (int b = 0; b < 8; b++) ow_write_byte(rom_codes[i][b]);
+        ow_write_byte(0x4E);  /* Write Scratchpad */
+        ow_write_byte(0x00);  /* TH — unused */
+        ow_write_byte(0x00);  /* TL — unused */
+        ow_write_byte(0x7F);  /* Config: 12-bit resolution */
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return ESP_OK;
+}
+
 esp_err_t ds18b20_init(void)
 {
     /* Configure GPIO with internal pull-up (external 4.7k is still
@@ -244,46 +291,43 @@ esp_err_t ds18b20_init(void)
     };
     gpio_config(&io_conf);
 
-    if (!ow_reset()) {
-        ESP_LOGE(TAG, "No 1-Wire devices detected on GPIO %d", DS18B20_GPIO);
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    rom_count = search_roms();
-    if (rom_count == 0) {
-        ESP_LOGE(TAG, "Search found no DS18B20 sensors");
+    if (enumerate() != ESP_OK) {
+        /* Not fatal: ds18b20_read_temps() keeps re-scanning, so a probe
+           that missed the boot-time search still comes back on its own. */
+        ESP_LOGE(TAG, "No DS18B20 found on GPIO %d — will keep re-scanning",
+                 DS18B20_GPIO);
         return ESP_ERR_NOT_FOUND;
     }
 
     ESP_LOGI(TAG, "Initialised — %d DS18B20 sensor(s) on GPIO %d",
              rom_count, DS18B20_GPIO);
-
-    /* Set all sensors to 12-bit resolution (default, but be explicit) */
-    for (int i = 0; i < rom_count; i++) {
-        if (!ow_reset()) continue;
-        ow_write_byte(0x55);  /* Match ROM */
-        for (int b = 0; b < 8; b++) ow_write_byte(rom_codes[i][b]);
-        ow_write_byte(0x4E);  /* Write Scratchpad */
-        ow_write_byte(0x00);  /* TH — unused */
-        ow_write_byte(0x00);  /* TL — unused */
-        ow_write_byte(0x7F);  /* Config: 12-bit resolution */
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
     return ESP_OK;
 }
 
 esp_err_t ds18b20_read_temps(float *temps, int *count)
 {
     if (rom_count == 0) {
-        *count = 0;
-        return ESP_ERR_INVALID_STATE;
+        /* Missed at boot or dropped after repeated failures: re-scan.
+           Cheap (~1 ms) when nothing answers the reset pulse. */
+        if (enumerate() != ESP_OK) {
+            if (++rescan_count % 12 == 1) {   /* log ~once a minute */
+                ESP_LOGW(TAG, "Still no DS18B20 on GPIO %d (re-scanning)",
+                         DS18B20_GPIO);
+            }
+            *count = 0;
+            return ESP_ERR_NOT_FOUND;
+        }
+        ESP_LOGI(TAG, "Re-discovered %d DS18B20 sensor(s) after %d re-scan(s)",
+                 rom_count, rescan_count);
+        rescan_count = 0;
+        fail_streak = 0;
     }
+
+    int read_count = 0;
 
     /* Issue Convert T to all devices simultaneously */
     if (!ow_reset()) {
-        *count = 0;
-        return ESP_FAIL;
+        goto finish;          /* nothing on the bus — counts as a failure */
     }
     ow_write_byte(0xCC);  /* Skip ROM — all devices convert */
     ow_write_byte(0x44);  /* Convert T */
@@ -291,7 +335,6 @@ esp_err_t ds18b20_read_temps(float *temps, int *count)
     /* Wait for conversion (750 ms max at 12-bit resolution) */
     vTaskDelay(pdMS_TO_TICKS(800));
 
-    int read_count = 0;
     for (int i = 0; i < rom_count; i++) {
         bool ok = false;
 
@@ -313,7 +356,28 @@ esp_err_t ds18b20_read_temps(float *temps, int *count)
                 continue;
             }
 
+            /* A bus stuck low reads all zeros, and crc8(0...0) == 0 passes
+               the check above — which would look like a valid 0.00 C. */
+            bool all_zero = true;
+            for (int b = 0; b < 9; b++) {
+                if (scratch[b] != 0) { all_zero = false; break; }
+            }
+            if (all_zero) {
+                ESP_LOGW(TAG, "Sensor %d: all-zero scratchpad (bus stuck low?) "
+                         "(attempt %d/%d)", i, retry + 1, DS18B20_READ_RETRIES);
+                continue;
+            }
+
             int16_t raw = (int16_t)((scratch[1] << 8) | scratch[0]);
+
+            /* 0x0550 = 85.0 C is the power-on reset value: the sensor
+               browned out or never ran the conversion. Not a real reading. */
+            if (raw == 0x0550) {
+                ESP_LOGW(TAG, "Sensor %d: 85.0 C power-on value, ignoring "
+                         "(attempt %d/%d)", i, retry + 1, DS18B20_READ_RETRIES);
+                continue;
+            }
+
             temps[read_count] = (float)raw / 16.0f;
             read_count++;
             ok = true;
@@ -326,6 +390,18 @@ esp_err_t ds18b20_read_temps(float *temps, int *count)
         }
     }
 
+finish:
     *count = read_count;
-    return (read_count > 0) ? ESP_OK : ESP_FAIL;
+
+    if (read_count > 0) {
+        fail_streak = 0;
+        return ESP_OK;
+    }
+    if (++fail_streak >= DS18B20_REENUM_AFTER_FAILS) {
+        ESP_LOGW(TAG, "No sensor answered for %d reads — re-enumerating bus",
+                 fail_streak);
+        rom_count = 0;      /* next call re-scans */
+        fail_streak = 0;
+    }
+    return ESP_FAIL;
 }

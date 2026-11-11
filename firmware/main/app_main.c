@@ -25,6 +25,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -35,6 +36,7 @@
 #include "control/pid.h"
 #include "comms/wifi_sta.h"
 #include "comms/mqtt_client.h"
+#include "comms/ota.h"
 
 static const char *TAG = "zymoscope";
 
@@ -66,7 +68,7 @@ static struct {
 /*  MQTT broker URI (compile-time default)                            */
 /* ------------------------------------------------------------------ */
 #ifndef MQTT_BROKER_URI
-#define MQTT_BROKER_URI "mqtt://192.168.1.100:1883"
+#define MQTT_BROKER_URI "mqtt://10.0.0.102:1883"
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -100,6 +102,16 @@ static float estimate_gravity(float current_weight)
 /* ------------------------------------------------------------------ */
 /*  Relay helpers                                                     */
 /* ------------------------------------------------------------------ */
+
+/* Set before an OTA/rollback reboot: relays stay OFF from here on. */
+static volatile bool relays_locked = false;
+
+static void relays_off_for_restart(void)
+{
+    relays_locked = true;
+    gpio_set_level(RELAY_HEAT_GPIO, 0);
+    gpio_set_level(RELAY_COOL_GPIO, 0);
+}
 
 static void relay_init(void)
 {
@@ -219,7 +231,7 @@ static void control_task(void *arg)
     for (;;) {
         /* Check for setpoint commands from MQTT */
         float new_sp = mqtt_get_cmd_setpoint();
-        if (!isnan(new_sp)) {
+        if (!isnan(new_sp) && new_sp != pid.setpoint) {
             pid_set_setpoint(&pid, new_sp);
             ESP_LOGI(TAG, "PID setpoint changed to %.1f C", new_sp);
 
@@ -239,32 +251,45 @@ static void control_task(void *arg)
             }
         }
 
-        /* Get current fermentation temperature */
-        float temp = 0;
+        /* Get current fermentation temperature from the DS18B20 probe.
+         * No fallback to the BME280: it measures air outside the ferment,
+         * and controlling on it (or on a zeroed reading when both sensors
+         * fail) would drive the heater flat out. */
+        float temp = NAN;
         if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(100))) {
             if (shared.temp_count > 0) {
                 temp = shared.temps[0];
-            } else {
-                temp = shared.bme_temp;
             }
             xSemaphoreGive(state_mutex);
         }
 
-        /* Run PID */
-        float output = pid_update(&pid, temp);
-
-        /* Drive relays:
-         *   output > 0.1  → heat ON,  cool OFF
-         *   output < -0.1 → heat OFF, cool ON
-         *   otherwise     → both OFF (deadband)
-         */
         int heat = 0, cool = 0;
-        if (output > 0.1f) {
-            heat = 1;
-        } else if (output < -0.1f) {
-            cool = 1;
+        float output = 0.0f;
+
+        if (isnan(temp)) {
+            /* Fail safe: no valid probe reading → both relays OFF, and
+             * clear the integrator so it doesn't resume with stale windup. */
+            pid_reset(&pid);
+            ESP_LOGW(TAG, "No valid DS18B20 reading — relays forced OFF");
+        } else {
+            /* Run PID */
+            output = pid_update(&pid, temp);
+
+            /* Drive relays:
+             *   output > 0.1  → heat ON,  cool OFF
+             *   output < -0.1 → heat OFF, cool ON
+             *   otherwise     → both OFF (deadband)
+             */
+            if (output > 0.1f) {
+                heat = 1;
+            } else if (output < -0.1f) {
+                cool = 1;
+            }
         }
 
+        if (relays_locked) {
+            heat = cool = 0;
+        }
         gpio_set_level(RELAY_HEAT_GPIO, heat);
         gpio_set_level(RELAY_COOL_GPIO, cool);
 
@@ -315,6 +340,14 @@ static void telemetry_task(void *arg)
         esp_err_t err = mqtt_publish_telemetry(&telem);
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "Telemetry published");
+
+            /* A freshly OTA'd image has now run sensors + control for a
+               while and talked to the broker: accept it (cancel rollback). */
+            if (ota_pending_verify() &&
+                esp_timer_get_time() >= OTA_VERIFY_MIN_UPTIME_S * 1000000LL &&
+                ota_mark_valid()) {
+                mqtt_publish_online();
+            }
         } else {
             ESP_LOGW(TAG, "Telemetry publish failed: %s", esp_err_to_name(err));
         }
@@ -374,6 +407,9 @@ void app_main(void)
 
     /* Relays */
     relay_init();
+
+    /* OTA: report running image, arm rollback timer if freshly updated */
+    ota_init(relays_off_for_restart);
 
     /* MQTT (wait briefly for Wi-Fi) */
     ESP_LOGI(TAG, "Waiting for Wi-Fi before starting MQTT...");

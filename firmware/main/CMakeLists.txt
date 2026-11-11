@@ -8,6 +8,7 @@ idf_component_register(
         "control/pid.c"
         "comms/wifi_sta.c"
         "comms/mqtt_client.c"
+        "comms/ota.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -18,4 +19,7 @@ idf_component_register(
         nvs_flash
         mqtt
         esp_timer
+        app_update
+        esp_https_ota
+        esp_http_client
 )

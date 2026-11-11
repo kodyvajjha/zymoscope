@@ -27,7 +27,9 @@ runs the web app and adds a camera pipeline. The ESP32 node stays dumb.
   - `main/sensor/` — ds18b20 (1-Wire), hx711 (load cell ADC), bme280 (I2C)
   - `main/display/` — SSD1306 OLED driver with 8x8 font
   - `main/control/` — PID temperature controller
-  - `main/comms/` — Wi-Fi STA + MQTT client
+  - `main/comms/` — Wi-Fi STA + MQTT client + OTA (`ota.c`)
+  - `partitions.csv` — 4 MB, two OTA slots (nvs kept at 0x9000/0x6000)
+  - `tools/ota_push.py` — push a build over the air (see `docs/ota.md`)
   - `main/app_main.c` — wires everything, runs 3 FreeRTOS tasks
 - `dashboard/` — Python web app
   - `zymoscope/` — FastAPI server, MQTT subscriber, SQLite DB, config, smart plug control
@@ -44,7 +46,8 @@ runs the web app and adds a camera pipeline. The ESP32 node stays dumb.
 cd firmware/
 idf.py set-target esp32
 idf.py build
-idf.py -p /dev/ttyUSB0 flash monitor
+idf.py -p /dev/ttyUSB0 flash monitor     # USB (needed once for OTA layout)
+python tools/ota_push.py                 # over the air, after that
 
 # Web dashboard
 cd dashboard/
@@ -55,12 +58,17 @@ python -m zymoscope.server
 ## Key conventions
 
 - MQTT topics: `zymoscope/<mac>/telemetry`, `zymoscope/<mac>/cmd`, `zymoscope/<mac>/status`
+- `status` topic: retained `online` (fw, partition, ota_state) / `offline` LWT, plus `ota` progress events
+- MQTT cmds: `{"setpoint": <float>}`, `{"ota_url": "<http url>"}` (never publish cmds retained)
+- ESP-IDF lives at `~/esp/esp-idf` — `. ~/esp/esp-idf/export.sh` before `idf.py`
 - ESP32 log tag: `"zymoscope"`
 - Default MQTT broker URI: `mqtt://192.168.1.100:1883` (in `firmware/main/app_main.c`)
 - PID setpoint persisted in NVS (`zymoscope` namespace, `setpoint` key)
 - Dashboard runs on port 8000 by default
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
+- `PLUG_WATCHDOG_SEC` (default 180): dashboard switches plugs off if no telemetry arrives for this long; 0 disables
+- Firmware fails safe: no valid DS18B20 reading → both relays OFF (no BME280 fallback)
 - python-kasa controls TP-Link Kasa plugs locally (no cloud). KP115 provides energy monitoring.
 
 ## Hardware (prototype)
@@ -105,7 +113,7 @@ ESP32-DevKitC + breakout modules on a breadboard. ~$45-55 total.
 
 1. Raspberry Pi integration + camera module (krausen tracking)
 2. pH probe support
-3. OTA firmware updates
+3. ~~OTA firmware updates~~ (done — see docs/ota.md)
 4. Custom PCB (KiCad, JLCPCB-ready)
 5. 3D-printable enclosure (OpenSCAD)
 

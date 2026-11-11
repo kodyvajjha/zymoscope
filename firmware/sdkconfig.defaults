@@ -24,3 +24,14 @@ CONFIG_MQTT_PROTOCOL_311=y
 
 # Stack sizes
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Flash + partitions (ESP32-WROOM-32E N4 = 4 MB; two OTA slots)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# OTA: roll back to the previous image if a new one never verifies.
+# (Plain-HTTP downloads are fine on the LAN.)
+# Do NOT enable anti-rollback / secure boot / flash encryption — they burn eFuses.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

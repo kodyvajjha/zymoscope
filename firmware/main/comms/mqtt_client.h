@@ -35,7 +35,19 @@ esp_err_t mqtt_publish_telemetry(const telemetry_t *data);
 bool mqtt_is_connected(void);
 
 /**
- * Returns the latest setpoint received from the command topic.
- * Returns NAN if none has been received.
+ * Publish a JSON event to zymoscope/<id>/status (OTA progress, online, ...).
+ */
+esp_err_t mqtt_publish_status(const char *json, bool retain);
+
+/**
+ * Publish the retained {"event":"online", fw, partition, ota_state} status.
+ * Sent on every connect, and again when an OTA image is marked valid.
+ */
+void mqtt_publish_online(void);
+
+/**
+ * Returns a newly received setpoint from the command topic, then clears it
+ * (each command is returned exactly once). Returns NAN if no new command
+ * has arrived since the last call.
  */
 float mqtt_get_cmd_setpoint(void);
