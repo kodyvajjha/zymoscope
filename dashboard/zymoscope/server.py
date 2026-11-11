@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from . import db, mqtt_sub, smart_plug, stats
+from . import alerts, db, mqtt_sub, smart_plug, stats
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -54,6 +54,38 @@ def _broadcast(device_id: str, payload: dict[str, Any]) -> None:
         asyncio.run_coroutine_threadsafe(
             _on_reported_setpoint(device_id, payload["setpoint"],
                                   payload.get("timestamp")), loop)
+    if alerts.enabled():
+        asyncio.run_coroutine_threadsafe(_alert_telemetry(device_id, payload), loop)
+
+
+async def _alert_telemetry(device_id: str, payload: dict[str, Any]) -> None:
+    try:
+        fallback = None
+        if payload.get("setpoint") is None:     # older firmware: use the UI target
+            state = await db.get_device_state(device_id)
+            fallback = state.get("setpoint") if state else None
+        await alerts.engine.on_telemetry(device_id, payload,
+                                         payload.get("timestamp") or time.time(), fallback)
+    except Exception:
+        log.exception("Alert processing failed")
+
+
+async def _alerts_loop() -> None:
+    """Seed alert state from the DB, then check for silent devices."""
+    now = time.time()
+    for dev in await db.get_devices():
+        alerts.engine.names[dev["device_id"]] = dev.get("name") or dev["device_id"]
+        last = await db.get_last_telemetry_ts(dev["device_id"])
+        if last:
+            alerts.engine.seed(dev["device_id"], last, now)
+    while True:
+        try:
+            for dev in await db.get_devices():      # pick up renames
+                alerts.engine.names[dev["device_id"]] = dev.get("name") or dev["device_id"]
+            await alerts.engine.check_offline(time.time())
+        except Exception:
+            log.exception("Alert check failed")
+        await asyncio.sleep(30)
 
 
 def _device_reports_setpoint(device_id: str) -> bool:
@@ -180,11 +212,17 @@ async def lifespan(app: FastAPI):
                 await asyncio.sleep(30)
         energy_task = asyncio.create_task(_poll_energy_loop())
         log.info("Smart plug energy polling + watchdog started")
+    alerts_task = None
+    if alerts.enabled():
+        alerts_task = asyncio.create_task(_alerts_loop())
+        log.info("ntfy alerts enabled (topic %s…)", settings.NTFY_TOPIC[:6])
     log.info("Zymoscope dashboard started")
     yield
     # Shutdown
     if energy_task:
         energy_task.cancel()
+    if alerts_task:
+        alerts_task.cancel()
     mqtt_sub.unregister_callback(_broadcast)
     mqtt_sub.unregister_status_callback(_on_status)
 
@@ -380,6 +418,24 @@ async def api_setpoint_history(device_id: str, hours: float = Query(0)):
     """Target changes [[unix_ts, setpoint], ...] for the chart's target line
     (the first entry is the target in force at the start of the range)."""
     return await db.get_setpoint_history(device_id, hours)
+
+
+@app.post("/api/alerts/test")
+async def api_alerts_test():
+    """Send a test notification to the configured ntfy topic."""
+    if not alerts.enabled():
+        return Response('{"error":"alerts are off (set NTFY_URL and NTFY_TOPIC)"}',
+                        status_code=400, media_type="application/json")
+    try:
+        await alerts.ntfy_send({"title": "Zymoscope test", "message":
+                                "Alerts are working. You'll hear from me when a device goes "
+                                "offline, the probe fails, a target is reached, or the "
+                                "temperature drifts out of range.", "tags": ["test_tube"],
+                                **({"click": settings.ALERT_CLICK_URL} if settings.ALERT_CLICK_URL else {})})
+    except Exception as exc:
+        return Response(json.dumps({"error": f"ntfy: {exc}"}), status_code=502,
+                        media_type="application/json")
+    return {"status": "sent"}
 
 
 @app.get("/api/state")

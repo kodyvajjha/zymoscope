@@ -377,6 +377,14 @@ async def get_setpoint_history(device_id: str, hours: float = 0) -> list[list[fl
         return [[r[0], r[1]] for r in await cur.fetchall()]
 
 
+async def get_last_telemetry_ts(device_id: str) -> float | None:
+    async with _get_conn() as db:
+        cur = await db.execute(
+            "SELECT MAX(timestamp) FROM telemetry WHERE device_id = ?", (device_id,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+
 async def get_active_batch(device_id: str) -> dict[str, Any] | None:
     """The running batch on a device (newest if several), with its age."""
     async with _get_conn() as db:

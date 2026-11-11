@@ -23,6 +23,14 @@ class Settings:
         # Switch the plugs off if no telemetry arrives for this many seconds
         # (ESP32 publishes every 30 s). 0 disables the watchdog.
         self.PLUG_WATCHDOG_SEC: int = int(os.getenv("PLUG_WATCHDOG_SEC", "180"))
+        # Phone alerts via ntfy (see alerts.py). Both empty = disabled.
+        self.NTFY_URL: str = os.getenv("NTFY_URL", "")          # e.g. http://localhost:2586
+        self.NTFY_TOPIC: str = os.getenv("NTFY_TOPIC", "")
+        # Tapping a notification opens this (e.g. the dashboard's Tailscale URL).
+        self.ALERT_CLICK_URL: str = os.getenv("ALERT_CLICK_URL", "")
+        self.ALERT_OFFLINE_SEC: int = int(os.getenv("ALERT_OFFLINE_SEC", "180"))
+        self.ALERT_RANGE_C: float = float(os.getenv("ALERT_RANGE_C", "3"))
+        self.ALERT_RANGE_MIN: float = float(os.getenv("ALERT_RANGE_MIN", "15"))
 
 
 settings = Settings()

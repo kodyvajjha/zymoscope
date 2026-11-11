@@ -36,6 +36,7 @@ runs the web app and adds a camera pipeline. The ESP32 node stays dumb.
 - `dashboard/` — Python web app
   - `zymoscope/` — FastAPI server, MQTT subscriber, SQLite DB, config, smart plug control
   - `zymoscope/smart_plug.py` — TP-Link Kasa plug control via python-kasa (KP115 energy monitoring)
+  - `zymoscope/alerts.py` — ntfy phone alerts (state machine per device)
   - `templates/index.html` — single-file dark-themed SPA (Chart.js, vanilla JS)
   - `docker-compose.yml` — optional Mosquitto + InfluxDB + Grafana stack
 - `hardware/` — KiCad schematic (placeholder), BOM CSV
@@ -77,6 +78,7 @@ python -m zymoscope.server
 - Python package is `zymoscope` (under `dashboard/zymoscope/`)
 - Smart plug env vars: `KASA_HEATER_HOST`, `KASA_COOLER_HOST` (IP addresses, empty = disabled)
 - `PLUG_WATCHDOG_SEC` (default 180): dashboard switches plugs off if no telemetry arrives for this long; 0 disables
+- Phone alerts (`zymoscope/alerts.py`) via self-hosted ntfy on the Pi (port 2586): offline / back online, probe fault / OK, target reached, out of range (±`ALERT_RANGE_C` 3 °C for `ALERT_RANGE_MIN` 15 min after reaching) / back in range. One message per start/clear. Env: `NTFY_URL`, `NTFY_TOPIC` (both empty = off), `ALERT_CLICK_URL`, `ALERT_OFFLINE_SEC` (180). `POST /api/alerts/test` sends a test
 - Firmware fails safe: no valid DS18B20 reading → both relays OFF (no BME280 fallback)
 - Control: PID in physical units (Kp/Ti/Td `#define`s in app_main.c) → time-proportioned relay output (420 s window, 60 s min pulse); relay changes trigger an immediate telemetry publish so the Kasa plug follows. Integral persisted in NVS (`pid_i`). Model + tuning rationale: docs/pid-tuning.md
 - python-kasa controls TP-Link Kasa plugs locally (no cloud). KP115 provides energy monitoring.
