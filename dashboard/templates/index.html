@@ -476,7 +476,7 @@
             <h2 data-f="name"></h2>
             <button class="icon-btn" data-f="rename" title="Rename">✎</button>
           </div>
-          <div class="dev-id">${escapeHtml(id)}</div>
+          <div class="dev-id" data-f="dev-id">${escapeHtml(id)}</div>
         </div>
         <div class="dev-meta">
           <span class="pill" data-f="pill">—</span>
@@ -584,6 +584,7 @@
     entry.name = name;
     entry.q("name").textContent = name;
     entry.q("name").title = name;
+    entry.q("dev-id").hidden = name === entry.id;   // don't show the MAC twice
     refreshDeviceOptions();
   }
   function refreshDeviceOptions() {

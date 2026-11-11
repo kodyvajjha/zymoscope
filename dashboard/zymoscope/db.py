@@ -308,8 +308,31 @@ _TEMP_SQL = """
 """
 
 
+# Long ranges aggregate every stored row (~2-5 s for 100k+ rows on a Pi 3),
+# so their results are cached briefly. The page appends live readings on
+# top, and at these zoom levels a few stale minutes are invisible.
+_SERIES_CACHE_TTL = 300.0
+_SERIES_CACHE_MIN_HOURS = 168
+_series_cache: dict[tuple[str, float, int], tuple[float, dict[str, Any]]] = {}
+
+
 async def get_series(
     device_id: str, hours: float = 24, max_points: int = 1500
+) -> dict[str, Any]:
+    cacheable = not hours or hours <= 0 or hours >= _SERIES_CACHE_MIN_HOURS
+    key = (device_id, float(hours or 0), int(max_points))
+    if cacheable:
+        hit = _series_cache.get(key)
+        if hit and hit[0] > time.monotonic():
+            return hit[1]
+    result = await _compute_series(device_id, hours, max_points)
+    if cacheable:
+        _series_cache[key] = (time.monotonic() + _SERIES_CACHE_TTL, result)
+    return result
+
+
+async def _compute_series(
+    device_id: str, hours: float, max_points: int
 ) -> dict[str, Any]:
     """Return a time-bucketed series for charting.
 
